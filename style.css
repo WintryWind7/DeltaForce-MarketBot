@@ -1,0 +1,70 @@
+/* 主窗口背景 */
+QMainWindow {
+    background-color: #F5F6F7;
+}
+
+/* 左右面板通用样式 */
+#LeftPanel, #RightPanel {
+    background-color: #FFFFFF;
+    border: 1px solid #E0E0E0;
+    border-radius: 4px;
+    margin: 8px;
+}
+
+/* 分割线样式 */
+DragBar {
+    background-color: #E0E0E0;
+    margin: 0 2px
+}
+DragBar:hover {
+    background-color: #C0C0C0;
+    width: 3px;
+}
+
+/* 面板标题 */
+#PanelTitle {
+    font: 16pt '微软雅黑';
+    color: #2D2D30;
+    padding: 12px 16px;
+    border-bottom: 1px solid #F0F0F0;
+}
+
+/* 底部工具栏 */
+#BottomBar {
+    background-color: #FFFFFF;
+    border-top: 1px solid #E0E0E0;
+}
+
+/* 系统设置按钮 */
+#SettingsButton {
+    background-color: #0078D4;
+    color: white;
+    border-radius: 4px;
+    padding: 8px 24px;
+    min-width: 120px;
+}
+#SettingsButton:hover {
+    background-color: #006CBB;
+}
+
+/* 功能按钮通用样式 */
+QPushButton {
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: #F8F9FA;
+    color: #2D2D30;
+    border: 1px solid #E0E0E0;
+    font-size: 13px;
+    min-width: 100px;
+}
+QPushButton:hover {
+    background: #E9ECEF;
+    border-color: #CFD3D9;
+}
+
+/* 调整面板边距 */
+#LeftPanel, #RightPanel {
+    border-radius: 8px;
+    margin: 10px;
+    padding: 10px;
+}
