@@ -313,6 +313,21 @@ class DeltaForceWindow(object):
         
         return (screen_x, screen_y)
     
+    def switch_to_deltaforce_window(self) -> bool:
+        """切换到DeltaForce游戏窗口"""
+        if self.target_window_handle is None:
+            if not self.find_deltaforce_process():
+                return False
+        
+        try:
+            # 使用Windows API将窗口置于前台
+            ctypes.windll.user32.SetForegroundWindow(self.target_window_handle)
+            # 确保窗口不是最小化状态
+            ctypes.windll.user32.ShowWindow(self.target_window_handle, 9)  # SW_RESTORE
+            print("切换到游戏窗口")
+            return True
+        except Exception as e:
+            return False
 
 
 
