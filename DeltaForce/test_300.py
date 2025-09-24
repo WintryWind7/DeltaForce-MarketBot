@@ -11,8 +11,12 @@ chinese_reader = easyocr.Reader(['ch_sim'])
 
 # 配置参数
 max_buy_number = 25*60
-low_price = 1600      # 目标价格上限 1600
+low_price = 1680      # 目标价格上限 1600
 min_price = 900      # 价格下限保护，防止识别错误 1100
+price_difference = 35  # 出售价格差值
+
+# 价格历史记录
+price_history = []  # 记录最近10次不可购买的高价格
 
 # 创建image文件夹
 image_folder = "image"
@@ -37,6 +41,83 @@ def generate_grid_coords():
             grid_coords.append((x, y))
     
     return grid_coords
+
+def get_price_mode(prices):
+    """计算价格列表的众数"""
+    if not prices:
+        return None
+    
+    from collections import Counter
+    counter = Counter(prices)
+    most_common = counter.most_common(1)
+    return most_common[0][0] if most_common else None
+
+def update_price_history(price):
+    """更新价格历史记录，保持最近10次记录"""
+    global price_history
+    price_history.append(price)
+    if len(price_history) > 10:
+        price_history.pop(0)  # 移除最旧的记录
+
+def write_purchase_log(total_price, unit_price, action):
+    """写入购买日志到本地文件"""
+    import datetime
+    import csv
+    import os
+    
+    log_file = "purchase_log.csv"
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 检查文件是否存在，不存在则创建并写入表头
+    file_exists = os.path.exists(log_file)
+    
+    try:
+        with open(log_file, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            
+            # 如果文件不存在，写入表头
+            if not file_exists:
+                writer.writerow(['时间戳', '总价', '单价', '行为'])
+            
+            # 写入数据
+            writer.writerow([timestamp, total_price, unit_price, action])
+            
+    except Exception as e:
+        print(f"日志写入失败: {e}")
+
+def harmony_function():
+    """调和函数 - 执行特定的点击和延迟操作序列"""
+    pyautogui.press('esc')
+    time.sleep(0.5)
+    pyautogui.press('esc')
+    time.sleep(0.5)
+    pyautogui.press('esc')
+    try: 
+        # 点击1400,2800，重复5次
+        for i in range(5):
+            pyautogui.press('esc')
+            time.sleep(0.3)
+            delta.click_ratio(0.1400, 0.2800)  # 1400,2800转换为比例坐标
+             # 每次点击间隔
+        time.sleep(2)
+        for i in range(3):
+            time.sleep(0.3) 
+            delta.click_ratio(0.8628, 0.8860)
+
+        # 延迟3秒，点击4333,2239
+        time.sleep(3)
+        delta.click_ratio(0.4333, 0.2239)  # 4333,2239转换为比例坐标
+        
+        # 延迟1秒，点击8585,6030
+        time.sleep(1)
+        delta.click_ratio(0.8585, 0.6030)  # 8585,6030转换为比例坐标
+        time.sleep(1)
+        print("✓ 调和操作完成，现在处于'开始游戏'界面")
+        return True
+        
+    except Exception as e:
+        print(f"✗ 调和操作失败: {e}")
+        return False
 
 def check_waiting_status():
     """检查指定区域是否显示长度为4的文本"""
@@ -98,12 +179,12 @@ if __name__ == "__main__":
         try:
             # 按下L键
             pyautogui.press('l')
-            time.sleep(0.04)
-            
+            for i in range(1):
+                m1_screen = delta.ratio_to_screen_coords(m1[0], m1[1])
+                pyautogui.click(m1_screen[0], m1_screen[1])
+                time.sleep(0.01)
             # 点击m1位置
-            m1_screen = delta.ratio_to_screen_coords(m1[0], m1[1])
-            pyautogui.click(m1_screen[0], m1_screen[1])
-            time.sleep(0.08)
+            time.sleep(0.02)
             
             # 识别价格区域并获取图片（使用与test_recognize.py相同的方法）
             # 获取屏幕坐标
@@ -123,11 +204,11 @@ if __name__ == "__main__":
             combined_text = "".join(text for _, text, _ in raw_results)
             
             # 保存调试图片
-            from PIL import Image
-            processed_pil = Image.fromarray(processed_image)
-            debug_filename = f"debug_{combined_text if combined_text else 'empty'}.jpg"
-            debug_filepath = os.path.join(image_folder, debug_filename)
-            processed_pil.save(debug_filepath, "JPEG", quality=95)
+            # from PIL import Image
+            # processed_pil = Image.fromarray(processed_image)
+            # debug_filename = f"debug_{combined_text if combined_text else 'empty'}.jpg"
+            # debug_filepath = os.path.join(image_folder, debug_filename)
+            # processed_pil.save(debug_filepath, "JPEG", quality=95)
             
             if combined_text:  # 如果识别成功
                 recognized_text = combined_text
@@ -135,11 +216,11 @@ if __name__ == "__main__":
                 current_price = int(current_full_price / max_buy_number)
                 
                 # 保存识别图片到image文件夹，以识别结果命名（只有数字）
-                filename = f"{current_full_price}.jpg"
-                filepath = os.path.join(image_folder, filename)
+                # filename = f"{current_full_price}.jpg"
+                # filepath = os.path.join(image_folder, filename)
                 
                 # 保存图片到image文件夹
-                processed_pil.save(filepath, "JPEG", quality=95)
+                # processed_pil.save(filepath, "JPEG", quality=95)
                 
                 # 判断是否满足条件（必须在价格区间内）
                 if min_price <= current_price <= low_price:
@@ -178,6 +259,8 @@ if __name__ == "__main__":
                                 time.sleep(1)
                                 pyautogui.press('esc')
                                 time.sleep(1)
+                            # 写入购买成功日志
+                            write_purchase_log(confirm_full_price, confirm_price, "符合预期")
                             return "purchase_success"  # 返回购买成功标识
                         else:
                             if confirm_price < min_price:
@@ -195,8 +278,14 @@ if __name__ == "__main__":
                 else:
                     if current_price < min_price:
                         print(f"✗ 价格异常：总价={current_full_price}, 单价={current_price} < 最低价格: {min_price}")
+                        # 写入日志
+                        write_purchase_log(current_full_price, current_price, "价格过低(异常)")
                     else:
                         print(f"✗ 条件不满足：总价={current_full_price}, 单价={current_price} > 目标价格: {low_price}")
+                        # 记录大于目标价格的不可购买价格到历史
+                        update_price_history(current_price)
+                        # 写入日志
+                        write_purchase_log(current_full_price, current_price, "价格过高")
                     pyautogui.press('esc')
                     time.sleep(0.05)
                     return False  # 不满足条件，继续循环
@@ -204,7 +293,7 @@ if __name__ == "__main__":
                 # 识别失败
                 pyautogui.press('esc')
                 time.sleep(0.05)
-                return False
+                return "recognition_failed"
                 
         except Exception as e:
             # 异常处理
@@ -213,6 +302,9 @@ if __name__ == "__main__":
             return False
     
     # 主循环
+    consecutive_failures = 0  # 连续识别失败计数器
+    max_failures = 10  # 最大连续失败次数
+    
     while True:
         try:
             # 检查是否按下q键退出
@@ -221,7 +313,10 @@ if __name__ == "__main__":
             
             # 执行主要处理流程
             result = main_process()
+            
             if result == "purchase_success":
+                # 购买成功，重置失败计数器
+                consecutive_failures = 0
                 # 购买成功后检查余额变化
                 print("购买完成，检查余额变化...")
                 time.sleep(1)  # 等待余额更新
@@ -287,7 +382,70 @@ if __name__ == "__main__":
                                                 time.sleep(0.2)
                                                 
                                                 price_value = int(bar_price)
-                                                input_price = price_value - 35  # 改为原价-35
+                                                
+                                                # 计算最低出售价格（基于价格历史众数）
+                                                min_sell_price = None
+                                                if price_history:
+                                                    mode_price = get_price_mode(price_history)
+                                                    if mode_price is not None:
+                                                        min_sell_price = mode_price - (3 * price_difference)
+                                                        print(f"价格历史众数: {mode_price}, 最低出售价: {min_sell_price}")
+                                                
+                                                input_price = price_value - price_difference  # 使用差值变量
+                                                
+                                                # 循环刷新直到价格合适
+                                                max_refresh_attempts = 20  # 最大刷新次数，防止无限循环
+                                                refresh_count = 0
+                                                
+                                                while (min_sell_price is not None and price_value < min_sell_price and 
+                                                       refresh_count < max_refresh_attempts):
+                                                    refresh_count += 1
+                                                    print(f"✗ 物品价格 {price_value} 低于最低标准 {min_sell_price}，第{refresh_count}次刷新价格...")
+                                                    
+                                                    # 按ESC，延迟1秒，重新点击刷新价格
+                                                    pyautogui.press('esc')
+                                                    time.sleep(1)
+                                                    
+                                                    # 重新点击刚才成功的位置
+                                                    if delta.click_ratio(x_ratio, y_ratio, do_wait=0.2):
+                                                        # 重新获取价格
+                                                        new_bar_price = delta.get_bar_price()
+                                                        if new_bar_price is not None:
+                                                            price_value = int(new_bar_price)
+                                                            input_price = price_value - price_difference
+                                                            print(f"刷新后价格: {price_value}, 新出售价: {input_price}")
+                                                            
+                                                            # 如果价格合适，重新执行确认操作
+                                                            if min_sell_price is None or price_value >= min_sell_price:
+                                                                print("✓ 价格合适，执行确认操作")
+                                                                delta.click_ratio(0.7546, 0.5343)
+                                                                time.sleep(0.3)
+                                                                delta.click_ratio(0.6891, 0.6051)
+                                                                time.sleep(0.2)
+                                                                pyautogui.hotkey('ctrl', 'a')
+                                                                time.sleep(0.2)
+                                                                break
+                                                        else:
+                                                            print("✗ 刷新后无法获取价格，跳过此物品")
+                                                            break
+                                                    else:
+                                                        print("✗ 重新点击失败，跳过此物品")
+                                                        break
+                                                
+                                                # 如果经过多次刷新仍不合适，强制按当前价格-35出售
+                                                if (min_sell_price is not None and price_value < min_sell_price and 
+                                                    refresh_count >= max_refresh_attempts):
+                                                    print(f"✗ 经过{max_refresh_attempts}次刷新仍不合适，强制按当前价格-{price_difference}出售")
+                                                    input_price = price_value - price_difference
+                                                    print(f"强制出售：物品价格={price_value}, 出售价格={input_price}")
+                                                    # 执行确认操作
+                                                    delta.click_ratio(0.7546, 0.5343)
+                                                    time.sleep(0.3)
+                                                    delta.click_ratio(0.6891, 0.6051)
+                                                    time.sleep(0.2)
+                                                    pyautogui.hotkey('ctrl', 'a')
+                                                    time.sleep(0.2)
+                                                
                                                 pyautogui.typewrite(str(input_price))
                                                 time.sleep(0.2)
                                                 
@@ -347,6 +505,24 @@ if __name__ == "__main__":
                         initial_balance = current_balance
                 else:
                     print("余额检查失败，继续执行程序...")
+            
+            elif result == "recognition_failed":
+                # 识别失败，增加失败计数器
+                consecutive_failures += 1
+                print(f"✗ 识别失败 ({consecutive_failures}/{max_failures})")
+                
+                # 检查是否达到最大连续失败次数
+                if consecutive_failures >= max_failures:
+                    print(f"连续{max_failures}次识别失败，启用调和函数...")
+                    if harmony_function():
+                        print("✓ 调和函数执行成功，重置失败计数器")
+                        consecutive_failures = 0
+                    else:
+                        print("✗ 调和函数执行失败")
+            
+            else:
+                # 其他情况（价格不符合条件等），重置失败计数器
+                consecutive_failures = 0
             
             # 循环间隔
             time.sleep(0.05)
