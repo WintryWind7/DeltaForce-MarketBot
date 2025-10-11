@@ -7,6 +7,10 @@ import cv2
 
 
 class DeltaForceRecognize(DeltaForceWindow):
+    """
+    底层识别类 - 提供OCR文字识别功能
+    继承自DeltaForceWindow，专门负责游戏内文字识别
+    """
 
     def __init__(self):
         super().__init__()
@@ -62,7 +66,8 @@ class DeltaForceRecognize(DeltaForceWindow):
 
 class OCR:
     """
-    OCR类，使用easyocr进行图片文字识别
+    底层OCR识别引擎 - 使用easyocr进行图片文字识别
+    提供截图、预处理、文字识别等底层功能
     """
     
     def __init__(self, languages: List[str] = ['en']):

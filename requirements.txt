@@ -3,3 +3,7 @@ easyocr
 opencv-python
 pillow
 numpy
+pyautogui
+keyboard
+pywin32
+PySide6

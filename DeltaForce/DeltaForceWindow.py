@@ -328,7 +328,76 @@ class DeltaForceWindow(object):
             return True
         except Exception as e:
             return False
-
+    
+    def get_all_deltaforce_windows(self):
+        """获取所有DeltaForce窗口信息"""
+        try:
+            windows = enum_windows()
+            deltaforce_windows = []
+            
+            for hwnd in windows:
+                try:
+                    win_info = get_window_info(hwnd)
+                    if win_info and win_info.get('process_name') == self.target_process_name:
+                        deltaforce_windows.append({
+                            'hwnd': hwnd,
+                            'window_info': win_info
+                        })
+                except Exception:
+                    continue
+            
+            return deltaforce_windows
+        except Exception as e:
+            print(f"获取DeltaForce窗口失败: {e}")
+            return []
+    
+    def switch_to_window(self, hwnd):
+        """切换到指定的窗口句柄"""
+        try:
+            import ctypes
+            # 设置前台窗口
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            # 确保窗口不是最小化状态
+            ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            
+            # 更新当前目标窗口
+            self.target_window_handle = hwnd
+            
+            # 获取窗口信息并更新尺寸
+            win_info = get_window_info(hwnd)
+            if win_info:
+                self.window_width = win_info.get('width', 1920)
+                self.window_height = win_info.get('height', 1080)
+                self.window_x = win_info.get('x', 0)
+                self.window_y = win_info.get('y', 0)
+                
+                # 将鼠标移动到窗口中心，避免触发PyAutoGUI的fail-safe
+                center_x = self.window_x + self.window_width // 2
+                center_y = self.window_y + self.window_height // 2
+                
+                import pyautogui
+                pyautogui.moveTo(center_x, center_y)
+            
+            return True
+        except Exception as e:
+            print(f"切换窗口失败: {e}")
+            return False
+    
+    def classify_windows_by_size(self, windows):
+        """根据窗口大小分类为主窗口和辅窗口"""
+        if len(windows) == 0:
+            return [], []
+        elif len(windows) == 1:
+            return windows, []
+        else:
+            # 按窗口大小排序，最小的作为主窗口
+            sorted_windows = sorted(windows, 
+                                  key=lambda w: w['window_info']['width'] * w['window_info']['height'])
+            
+            main_windows = [sorted_windows[0]]
+            aux_windows = sorted_windows[1:]
+            
+            return main_windows, aux_windows
 
 
 def print_process_info():

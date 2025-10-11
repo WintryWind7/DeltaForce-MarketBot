@@ -1,0 +1,8 @@
+{
+  "custom_ammo_dual_behavior": {
+    "target_price": 1250,
+    "min_valid_price": 800,
+    "ammo_position": 2,
+    "click_count": 3
+  }
+}
