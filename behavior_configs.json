@@ -6,11 +6,12 @@
     "click_count": 5
   },
   "purchase_refresh_behavior": {
-    "target_price": 448,
+    "target_price": 488,
     "min_price_threshold": 200,
-    "refresh_delay": 4.0,
-    "refresh_quantity": 1,
+    "refresh_delay": 3.0,
+    "refresh_quantity": 31,
     "purchase_quantity": 200,
-    "click_times": 5
+    "click_times": 5,
+    "max_quantity": 200
   }
 }

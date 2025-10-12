@@ -55,6 +55,14 @@ BEHAVIOR_INFO = {
             "min": 1,
             "max": 20,
             "description": "购买阶段连续点击的次数"
+        },
+        "max_quantity": {
+            "type": "int",
+            "label": "数量滑条最大值",
+            "default": 200,
+            "min": 50,
+            "max": 999,
+            "description": "游戏内数量选择滑条的最大值，影响数量选择精度"
         }
     }
 }
@@ -102,6 +110,7 @@ class PurchaseRefreshBehavior(QThread):
         self.refresh_quantity = self.config.get('refresh_quantity', 1)
         self.purchase_quantity = self.config.get('purchase_quantity', 2)
         self.click_times = self.config.get('click_times', 5)
+        self.max_quantity = self.config.get('max_quantity', 200)
         
         # 控制变量
         self.should_stop = False
@@ -150,13 +159,16 @@ class PurchaseRefreshBehavior(QThread):
     def is_balance_reasonable(self, price_diff):
         """
         判断余额差值是否合理
-        合理范围：最低阈值 <= price_diff <= 2倍目标价格
+        考虑刷新数量：合理范围 = 刷新数量 × (最低阈值 ~ 2倍目标价格)
         """
-        min_reasonable = self.min_price_threshold
-        max_reasonable = self.target_price * 2
+        actual_refresh_quantity = max(1, self.refresh_quantity)
+        
+        # 计算预期的价格范围（考虑刷新数量）
+        min_reasonable = self.min_price_threshold * actual_refresh_quantity
+        max_reasonable = self.target_price * 2 * actual_refresh_quantity
         
         is_reasonable = min_reasonable <= price_diff <= max_reasonable
-        self.log_message.emit(f"💡 价格合理性检查: {price_diff} (合理范围: {min_reasonable}-{max_reasonable}) -> {'✅合理' if is_reasonable else '❌不合理'}")
+        self.log_message.emit(f"💡 价格合理性检查: {price_diff} (数量{actual_refresh_quantity}×合理范围: {min_reasonable}-{max_reasonable}) -> {'✅合理' if is_reasonable else '❌不合理'}")
         
         return is_reasonable
     
@@ -223,7 +235,7 @@ class PurchaseRefreshBehavior(QThread):
             
             success = self.delta.buy_in_market(
                 buyin=actual_refresh_quantity,  # 使用配置的刷新数量
-                maxin=999,
+                maxin=self.max_quantity,  # 使用配置的最大值
                 times=1,
                 delay=0.07,
                 buy=True,
@@ -248,7 +260,7 @@ class PurchaseRefreshBehavior(QThread):
             
             success = self.delta.buy_in_market(
                 buyin=self.purchase_quantity,
-                maxin=999,
+                maxin=self.max_quantity,  # 使用配置的最大值
                 times=self.click_times,
                 delay=0.07,
                 buy=True,
@@ -276,7 +288,7 @@ class PurchaseRefreshBehavior(QThread):
             # 使用测试模式只设置数量，不实际购买
             success = self.delta.buy_in_market(
                 buyin=actual_refresh_quantity,
-                maxin=999,
+                maxin=self.max_quantity,  # 使用配置的最大值
                 times=1,
                 delay=0.07,
                 buy=False,  # 只设置数量，不购买
@@ -294,16 +306,16 @@ class PurchaseRefreshBehavior(QThread):
             self.log_message.emit(f"❌ 重置数量异常: {e}")
             return False
     
-    def write_log(self, check_num, balance_before, balance_after, price_diff, action):
+    def write_log(self, check_num, balance_before, balance_after, unit_price, action):
         """写入日志文件"""
         try:
             with open(self.log_file, 'a', encoding='utf-8') as f:
                 if check_num == 1:
                     # 写入表头
-                    f.write("检测次数,购买前余额,购买后余额,价格差,动作,时间\n")
+                    f.write("检测次数,购买前余额,购买后余额,单价,动作,时间\n")
                 
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                f.write(f"{check_num},{balance_before},{balance_after},{price_diff},{action},{timestamp}\n")
+                f.write(f"{check_num},{balance_before},{balance_after},{unit_price:.1f},{action},{timestamp}\n")
                 
         except Exception as e:
             self.log_message.emit(f"⚠️ 日志写入失败: {e}")
@@ -395,33 +407,35 @@ class PurchaseRefreshBehavior(QThread):
                             time.sleep(self.refresh_delay)
                             break
                         
-                        # 步骤3: 计算价格差
+                        # 步骤3: 计算价格差和单价
                         price_diff = balance_before - balance_after
-                        self.log_message.emit(f"💸 检测到价格: {price_diff} (余额: {balance_before} → {balance_after})")
+                        actual_refresh_quantity = max(1, self.refresh_quantity)
+                        unit_price = price_diff / actual_refresh_quantity  # 计算单价
+                        self.log_message.emit(f"💸 检测到总价: {price_diff}, 单价: {unit_price:.1f} (数量: {actual_refresh_quantity}, 余额: {balance_before} → {balance_after})")
                         
                         # 步骤4: 价格合理性检查
                         if self.is_balance_reasonable(price_diff):
-                            # 合理的价格差，继续判断是否满足购买条件
-                            if price_diff < self.target_price:
+                            # 合理的价格差，继续判断是否满足购买条件（使用单价比较）
+                            if unit_price < self.target_price:
                                 # ============ 第二阶段：购买阶段 ============
                                 self.current_phase = "购买阶段"
-                                self.log_message.emit(f"🎉 发现低价子弹! 价格: {price_diff} < 目标: {self.target_price}")
+                                self.log_message.emit(f"🎉 发现低价子弹! 单价: {unit_price:.1f} < 目标: {self.target_price}")
                                 self.log_message.emit("💰 进入购买阶段...")
                                 self.low_price_found_count += 1
                                 
                                 # 执行批量购买
                                 if self.purchase_phase_buy():
-                                    self.write_log(self.refresh_count, balance_before, balance_after, price_diff, f"购买成功({self.purchase_quantity}x{self.click_times})")
+                                    self.write_log(self.refresh_count, balance_before, balance_after, unit_price, f"购买成功({self.purchase_quantity}x{self.click_times})")
                                     self.log_message.emit("✅ 购买阶段完成，准备下次刷新")
                                 else:
-                                    self.write_log(self.refresh_count, balance_before, balance_after, price_diff, "购买失败")
+                                    self.write_log(self.refresh_count, balance_before, balance_after, unit_price, "购买失败")
                                     self.log_message.emit("❌ 购买阶段失败")
                                 
                                 # 重置为最小值，准备下次刷新阶段
                                 self.reset_to_minimum()
                             else:
-                                self.log_message.emit(f"📊 价格过高: {price_diff} >= 目标: {self.target_price}，继续刷新")
-                                self.write_log(self.refresh_count, balance_before, balance_after, price_diff, "价格过高")
+                                self.log_message.emit(f"📊 价格过高: 单价 {unit_price:.1f} >= 目标: {self.target_price}，继续刷新")
+                                self.write_log(self.refresh_count, balance_before, balance_after, unit_price, "价格过高")
                                 
                                 # 重置为最小值（为下次刷新阶段准备）
                                 self.reset_to_minimum()
