@@ -252,7 +252,8 @@ class MainWindow(QMainWindow):
                     "description": behavior['description'],
                     "icon": icon_map.get(behavior['id'], "⚡"),
                     "version": behavior.get('version', '1.0.0'),
-                    "author": behavior.get('author', 'Unknown')
+                    "author": behavior.get('author', 'Unknown'),
+                    "tags": behavior.get('tags', [])
                 }
                 
                 action_card = self.create_action_card(action_data)
@@ -299,9 +300,37 @@ class MainWindow(QMainWindow):
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(2)
         
+        # 标题和标签的水平布局
+        title_row_layout = QHBoxLayout()
+        title_row_layout.setContentsMargins(0, 0, 0, 0)
+        title_row_layout.setSpacing(8)
+        
         name_label = QLabel(action["name"])
         name_label.setFont(QFont("Microsoft YaHei", 12, QFont.Bold))
-        info_layout.addWidget(name_label)
+        title_row_layout.addWidget(name_label)
+        
+        # 添加标签
+        if action.get("tags") and len(action["tags"]) > 0:
+            for tag in action["tags"]:
+                tag_label = QLabel(tag)
+                tag_label.setStyleSheet("""
+                    QLabel {
+                        background-color: #3498db;
+                        color: white;
+                        border-radius: 8px;
+                        padding: 4px 8px;
+                        font-size: 12px;
+                        font-weight: bold;
+                        margin: 0px 4px;
+                    }
+                """)
+                tag_label.setFont(QFont("Microsoft YaHei", 12, QFont.Bold))
+                tag_label.setFixedHeight(24)
+                tag_label.setAlignment(Qt.AlignCenter)
+                title_row_layout.addWidget(tag_label)
+        
+        title_row_layout.addStretch()
+        info_layout.addLayout(title_row_layout)
         
         desc_label = QLabel(action["description"])
         desc_label.setStyleSheet("color: #666; font-size: 10px;")
@@ -470,8 +499,9 @@ class MainWindow(QMainWindow):
             # 根据类型创建对应的控件
             if param_type == 'int':
                 widget = QSpinBox()
-                widget.setMinimum(param_config.get('min', 0))
-                widget.setMaximum(param_config.get('max', 9999))
+                # 取消数值范围限制，允许用户自由输入
+                widget.setMinimum(-2147483648)  # 32位整数最小值
+                widget.setMaximum(2147483647)   # 32位整数最大值
                 widget.setValue(default_value)
                 widget.setStyleSheet("""
                     QSpinBox {
@@ -486,8 +516,9 @@ class MainWindow(QMainWindow):
                 """)
             elif param_type == 'float':
                 widget = QDoubleSpinBox()
-                widget.setMinimum(param_config.get('min', 0.0))
-                widget.setMaximum(param_config.get('max', 999.9))
+                # 取消数值范围限制，允许用户自由输入
+                widget.setMinimum(-999999999.9)  # 极大负数
+                widget.setMaximum(999999999.9)   # 极大正数
                 widget.setSingleStep(param_config.get('step', 0.1))
                 widget.setDecimals(1)
                 widget.setValue(default_value)
@@ -505,9 +536,9 @@ class MainWindow(QMainWindow):
             else:
                 # 默认使用整数控件
                 widget = QSpinBox()
-                # 如果没有指定范围，使用更大的范围以避免限制用户输入
-                widget.setMinimum(param_config.get('min', 0))
-                widget.setMaximum(param_config.get('max', 999999))
+                # 取消数值范围限制，允许用户自由输入
+                widget.setMinimum(-2147483648)  # 32位整数最小值
+                widget.setMaximum(2147483647)   # 32位整数最大值
                 widget.setValue(default_value)
             
             # 存储控件引用
@@ -933,19 +964,28 @@ class MainWindow(QMainWindow):
                 self.log_text.append("⚠️ 已有行为正在运行中")
                 return
             
-            # 新架构下不再需要Delta实例的延迟初始化
-            # 窗口句柄将直接传递给行为脚本
+            # 获取DeltaForce窗口句柄（使用原有方法）
+            processes = self.get_deltaforce_processes()
+            window_handles = [process['hwnd'] for process in processes]
             
-            # 获取行为信息
-            behavior_info = self.behavior_manager.get_behavior_info(behavior_id)
-            if not behavior_info:
-                self.log_text.append(f"❌ 未找到行为: {behavior_id}")
+            if not window_handles:
+                self.log_text.append("❌ 未找到DeltaForce窗口")
                 return
             
-            # 获取行为类
-            behavior_class = self.behavior_manager.get_behavior_class(behavior_id)
-            if not behavior_class:
-                self.log_text.append(f"❌ 无法加载行为类: {behavior_id}")
+            self.log_text.append(f"🎯 准备执行行为: {behavior_id}")
+            self.log_text.append(f"📊 获取到 {len(window_handles)} 个窗口句柄: {window_handles}")
+            
+            # 获取自定义配置
+            config = self.get_behavior_config(behavior_id)
+            self.log_text.append(f"🎛️ 使用自定义配置: {config}")
+            
+            # 使用BehaviorManager的统一接口创建行为实例
+            self.current_behavior = self.behavior_manager.create_behavior_instance(
+                behavior_id, window_handles, config
+            )
+            
+            if not self.current_behavior:
+                self.log_text.append(f"❌ 创建行为实例失败: {behavior_id}")
                 return
             
             # 创建用户输入监控
@@ -956,44 +996,21 @@ class MainWindow(QMainWindow):
             self.input_monitor.user_input_detected.connect(self.on_user_input_detected)
             self.input_monitor.monitor_status.connect(self.log_text.append)
             
-            # 获取窗口句柄列表（新架构）
-            window_handles = []
-            try:
-                processes = self.get_deltaforce_processes()
-                window_handles = [process['hwnd'] for process in processes]
-                self.log_text.append(f"📊 获取到 {len(window_handles)} 个窗口句柄: {window_handles}")
-            except Exception as e:
-                self.log_text.append(f"⚠️ 获取窗口句柄失败: {e}")
-            
-            # 获取自定义配置（如果有的话）
-            custom_config = self.get_behavior_config(behavior_id)
-            
-            # 创建行为实例（传递窗口句柄和自定义配置）
-            base_config = {
-                'max_buy_number': 25*60,
-                'low_price': 1680,
-                'min_price': 900,
-                'price_difference': 35
-            }
-            
-            # 合并自定义配置
-            config = {**base_config, **custom_config}
-            
-            if custom_config:
-                self.log_text.append(f"🎛️ 使用自定义配置: {custom_config}")
-            
-            self.current_behavior = behavior_class(window_handles, config)
-            
             # 连接行为信号
-            self.current_behavior.log_message.connect(self.log_text.append)
-            self.current_behavior.status_changed.connect(self.on_behavior_status_changed)
-            self.current_behavior.finished_signal.connect(self.on_behavior_finished)
+            if hasattr(self.current_behavior, 'log_message'):
+                self.current_behavior.log_message.connect(self.log_text.append)
+            if hasattr(self.current_behavior, 'status_changed'):
+                self.current_behavior.status_changed.connect(self.on_behavior_status_changed)
+            if hasattr(self.current_behavior, 'finished_signal'):
+                self.current_behavior.finished_signal.connect(self.on_behavior_finished)
             
             # 同时启动监控和行为线程
             self.input_monitor.start()
             self.current_behavior.start()
             
-            self.log_text.append(f"🚀 {behavior_info['title']} 已启动")
+            # 获取行为信息用于显示
+            behavior_info = self.behavior_manager.get_behavior_info(behavior_id)
+            self.log_text.append(f"🚀 {behavior_info.get('title', behavior_id)} 已启动")
             self.log_text.append("👁️ 用户输入监控已启动")
             
         except Exception as e:

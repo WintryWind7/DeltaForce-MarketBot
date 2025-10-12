@@ -1,4 +1,8 @@
-from DeltaForceRecognize import DeltaForceRecognize
+# 尝试相对导入，如果失败则使用绝对导入
+try:
+    from .DeltaForceRecognize import DeltaForceRecognize
+except ImportError:
+    from DeltaForceRecognize import DeltaForceRecognize
 import pyautogui
 import time
 import numpy as np
@@ -50,6 +54,8 @@ class DeltaForceClass(DeltaForceRecognize):
         get_ammo_price(ammo_position): 获取配装界面指定位置的子弹价格
         click_ammo(): 在战备界面点击子弹按钮
         click_ratio(x_ratio, y_ratio, do_after, do_wait): 根据比例坐标进行点击的封装方法
+        press_key(key, loop): 按键操作方法，包含窗口聚焦验证
+        buy_in_market(buyin, maxin, times, delay, buy, loop): 交易行购买操作，支持数量选择和循环点击
         goto(action): 通用位置点击方法，支持多种预定义操作
         其他自动化操作方法将在此基础上扩展
     """
@@ -80,7 +86,7 @@ class DeltaForceClass(DeltaForceRecognize):
         self.window_x = 0  # 默认X位置
         self.window_y = 0  # 默认Y位置
     
-    def get_balance(self, m3_ratio=(0.8066, 0.0866), m4_ratio=(0.7555, 0.2777), m5_ratio=(0.8566, 0.2914)):
+    def get_balance(self, where="default", loop=False):
         """
         自动识别游戏内账户余额
         
@@ -92,13 +98,11 @@ class DeltaForceClass(DeltaForceRecognize):
         
         所有坐标使用相对于游戏窗口的比例坐标，确保在不同分辨率下的兼容性。
         
-        Args:固定值
-            m3_ratio (tuple): 触发余额显示的点击位置比例坐标 (x_ratio, y_ratio)
-                            默认值 (0.8066, 0.0866) 对应游戏界面中的余额按钮位置
-            m4_ratio (tuple): 余额显示区域左上角的比例坐标 (x_ratio, y_ratio)
-                            默认值 (0.7555, 0.2777) 定义截图区域的起始点
-            m5_ratio (tuple): 余额显示区域右下角的比例坐标 (x_ratio, y_ratio)
-                            默认值 (0.8566, 0.2914) 定义截图区域的结束点
+        Args:
+            where (str): 余额位置类型，支持以下选项：
+                        "default" - 默认位置（原有位置）
+                        "market" - 交易行位置
+            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
             
         Returns:
             int: 成功识别时返回账户余额数值
@@ -112,15 +116,27 @@ class DeltaForceClass(DeltaForceRecognize):
             
         Example:
             >>> delta = DeltaForceClass()
-            >>> balance = delta.get_balance()
-            >>> if balance is not None:
-            ...     print(f"当前余额: {balance}")
-            ... else:
-            ...     print("余额识别失败")
+            >>> balance = delta.get_balance("default")  # 默认位置
+            >>> balance = delta.get_balance("market")   # 交易行位置
         """
+        # 根据where参数选择对应的位置配置
+        if where == "market":
+            # 交易行位置配置
+            m3_ratio = (0.8665, 0.0845)  # 交易行余额点击位置
+            # 交易行的识别区域需要相应偏移，保持y轴不变，x轴偏移，手动偏移
+            m4_ratio = (0.7855, 0.2777)  # 余额显示区域左上角（加上偏移）
+            m5_ratio = (0.8866, 0.2914)  # 余额显示区域右下角（加上偏移）
+            print(f"🎯 交易行位置配置: 点击({m3_ratio[0]:.4f}, {m3_ratio[1]:.4f}), 识别区域({m4_ratio[0]:.4f}, {m4_ratio[1]:.4f}) 到 ({m5_ratio[0]:.4f}, {m5_ratio[1]:.4f})")
+        else:  # where == "default" 或其他值
+            # 默认位置配置
+            m3_ratio = (0.8066, 0.0866)  # 默认余额点击位置
+            m4_ratio = (0.7555, 0.2777)  # 余额显示区域左上角
+            m5_ratio = (0.8566, 0.2914)  # 余额显示区域右下角
+            print(f"🎯 默认位置配置: 点击({m3_ratio[0]:.4f}, {m3_ratio[1]:.4f}), 识别区域({m4_ratio[0]:.4f}, {m4_ratio[1]:.4f}) 到 ({m5_ratio[0]:.4f}, {m5_ratio[1]:.4f})")
+        
         # 验证窗口聚焦状态
-        if not self.verify_window_focus():
-            error_msg = f"❌ [get_balance] 窗口验证失败，拒绝执行余额识别"
+        if not self.verify_window_focus(loop=loop):
+            error_msg = f"❌ [get_balance] 窗口验证失败，拒绝执行余额识别 (位置: {where})"
             print(error_msg)
             if self.log_callback:
                 self.log_callback(error_msg)
@@ -160,6 +176,11 @@ class DeltaForceClass(DeltaForceRecognize):
             
             # 步骤6: 处理OCR识别结果并提取余额数值
             if results:
+                # 记录详细的OCR调试信息
+                print(f"🔍 OCR识别结果 ({where}位置):")
+                for i, (bbox, text, confidence) in enumerate(results):
+                    print(f"  结果{i+1}: 文本='{text}', 置信度={confidence:.3f}, 位置={bbox}")
+                
                 # 合并所有识别到的数字文本片段
                 combined_text = ""
                 for (bbox, text, confidence) in results:
@@ -167,16 +188,18 @@ class DeltaForceClass(DeltaForceRecognize):
                     filtered_text = ''.join(char for char in text if char.isdigit())
                     combined_text += filtered_text
                 
+                print(f"📊 合并后的数字文本: '{combined_text}'")
+                
                 # 将合并后的数字字符串转换为整数
                 if combined_text:
                     balance = int(combined_text)
-                    # print(f"成功识别账户余额: {balance}")  # 调试用输出
+                    print(f"✅ 成功识别账户余额: {balance}")
                     return balance
                 else:
-                    # print("余额识别失败：OCR结果中未找到有效数字")
+                    print("❌ 余额识别失败：OCR结果中未找到有效数字")
                     return None
             else:
-                # print("余额识别失败：OCR未返回任何识别结果")
+                print("❌ 余额识别失败：OCR未返回任何识别结果")
                 return None
                 
         except Exception as e:
@@ -320,7 +343,7 @@ class DeltaForceClass(DeltaForceRecognize):
             print(f"出售价格识别过程中发生错误: {e}")
             return None
 
-    def get_ammo_price(self, ammo_position):
+    def get_ammo_price(self, ammo_position, loop=False):
         """
         获取配装界面子弹价格
         
@@ -335,6 +358,7 @@ class DeltaForceClass(DeltaForceRecognize):
                                4 - 第4个位置的子弹价格 (0.8956,0.4265 到 0.9333,0.4456)
                                5 - 第5个位置的子弹价格 (0.7194,0.5237 到 0.7571,0.5428)
                                6 - 第6个位置的子弹价格 (0.8956,0.5237 到 0.9333,0.5428)
+            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
         
         Returns:
             str: 成功识别时返回价格数字字符串
@@ -363,7 +387,7 @@ class DeltaForceClass(DeltaForceRecognize):
             ...     print(f"第6个位置子弹价格: {price6}")
         """
         # 验证窗口聚焦状态
-        if not self.verify_window_focus():
+        if not self.verify_window_focus(loop=loop):
             error_msg = f"❌ [get_ammo_price] 窗口验证失败，拒绝执行价格识别"
             print(error_msg)
             if self.log_callback:
@@ -459,12 +483,15 @@ class DeltaForceClass(DeltaForceRecognize):
             print(f"第{ammo_position}个位置子弹价格识别过程中发生错误: {e}")
             return None
 
-    def click_ammo(self):
+    def click_ammo(self, loop=False):
         """
         在战备界面点击子弹
         
         该方法在战备界面中点击子弹按钮，用于进入子弹配装界面。
         使用固定的比例坐标进行点击操作。
+        
+        Args:
+            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
         
         Returns:
             bool: 点击成功返回True，失败返回False
@@ -477,7 +504,7 @@ class DeltaForceClass(DeltaForceRecognize):
             ...     print("点击子弹按钮失败")
         """
         # 验证窗口聚焦状态
-        if not self.verify_window_focus():
+        if not self.verify_window_focus(loop=loop):
             error_msg = f"❌ [click_ammo] 窗口验证失败，拒绝执行子弹点击"
             print(error_msg)
             if self.log_callback:
@@ -487,7 +514,7 @@ class DeltaForceClass(DeltaForceRecognize):
         # 直接使用click_ratio方法点击子弹按钮
         return self.click_ratio(0.8400, 0.7000)
 
-    def click_ratio(self, x_ratio, y_ratio, do_after=0.0, do_wait=0.0):
+    def click_ratio(self, x_ratio, y_ratio, do_after=0.0, do_wait=0.0, loop=False):
         """
         根据比例坐标进行点击的封装方法
         
@@ -499,6 +526,7 @@ class DeltaForceClass(DeltaForceRecognize):
             y_ratio (float): Y轴比例坐标，范围0.0-1.0
             do_after (float): 点击前等待时间，默认0.0秒（立即点击）
             do_wait (float): 点击后等待时间，默认0.3秒
+            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
         
         Returns:
             bool: 点击成功返回True，失败返回False
@@ -511,7 +539,7 @@ class DeltaForceClass(DeltaForceRecognize):
             >>> delta.click_ratio(0.9, 0.1, do_after=1.0, do_wait=2.0)
         """
         # 验证窗口聚焦状态
-        if not self.verify_window_focus():
+        if not self.verify_window_focus(loop=loop):
             error_msg = f"❌ [click_ratio] 窗口验证失败，拒绝执行点击操作 ({x_ratio}, {y_ratio})"
             print(error_msg)
             if self.log_callback:
@@ -550,6 +578,128 @@ class DeltaForceClass(DeltaForceRecognize):
             
         except Exception as e:
             print(f"点击操作失败: {e}")
+            return False
+
+    def press_key(self, key, loop=False):
+        """
+        按键操作方法，包含窗口聚焦验证
+        
+        Args:
+            key (str): 要按的键名（如 'esc', 'enter', 'space' 等）
+            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
+        
+        Returns:
+            bool: 操作成功返回True，失败返回False
+        """
+        # 验证窗口聚焦状态
+        if not self.verify_window_focus(loop=loop):
+            return False
+        
+        try:
+            import pyautogui
+            pyautogui.press(key)
+            print(f"成功按键: {key}")
+            return True
+            
+        except Exception as e:
+            print(f"按键操作失败: {e}")
+            return False
+
+    def buy_in_market(self, buyin, maxin, times=1, delay=0.07, buy=True, loop=False):
+        """
+        交易行购买操作
+        
+        在交易行界面执行购买操作，包括数量选择、预备点击和循环购买点击。
+        
+        Args:
+            buyin (int): 购买数量（必须参数）
+            maxin (int): 最大数量（必须参数）
+            times (int): 循环点击购买按钮的次数，默认1次（不循环）
+            delay (float): 每次点击之间的延迟时间（秒），默认0.07秒
+            buy (bool): 是否执行实际购买操作，默认True。False时仅选择数量，用于测试
+            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
+        
+        Returns:
+            bool: 操作成功返回True，失败返回False
+        """
+        # 验证参数
+        if buyin <= 0 or maxin <= 0:
+            print(f"❌ [buy_in_market] 参数错误: buyin={buyin}, maxin={maxin}")
+            return False
+        
+        if buyin > maxin:
+            print(f"❌ [buy_in_market] 购买数量({buyin})不能超过最大数量({maxin})")
+            return False
+        
+        # 验证窗口聚焦状态
+        if not self.verify_window_focus(loop=loop):
+            print("❌ [buy_in_market] 窗口验证失败，拒绝执行购买操作")
+            return False
+        
+        try:
+            # 计算数量选择条的点击位置
+            left_ratio = 0.7890   # 最左侧位置
+            right_ratio = 0.9036  # 最右侧位置
+            y_ratio = 0.7233      # 纵坐标位置
+            
+            # 计算购买比例 - 修正为离散位置计算
+            # 最左侧(数量1) = 0%, 最右侧(数量maxin) = 100%
+            # 中间有 (maxin - 1) 个间隔需要计算
+            if maxin == 1:
+                # 特殊情况：只有一个数量选项
+                quantity_ratio = 0.0
+            else:
+                # 正常情况：将数量1-maxin映射到0%-100%
+                quantity_ratio = (buyin - 1) / (maxin - 1)
+            
+            # 计算实际点击的X坐标比例
+            click_x_ratio = left_ratio + (right_ratio - left_ratio) * quantity_ratio
+            
+            print(f"📊 [buy_in_market] 数量选择: {buyin}/{maxin} ({quantity_ratio:.2%})")
+            print(f"🎯 [buy_in_market] 点击位置: ({click_x_ratio:.4f}, {y_ratio})")
+            
+            # 点击数量选择条
+            if not self._click_ratio_internal(click_x_ratio, y_ratio):
+                print("❌ [buy_in_market] 数量选择点击失败")
+                return False
+            
+            print(f"✅ [buy_in_market] 数量选择完成: {buyin}/{maxin}")
+            
+            # 如果buy为False，则只进行数量选择，不执行购买
+            if not buy:
+                print("🧪 [buy_in_market] 测试模式，跳过购买操作")
+                return True
+            
+            # 短暂延迟后执行购买操作
+            import time
+            time.sleep(0.1)
+            
+            # 先点击预备位置 (0.0711, 0.1985) - 已被用户注释掉
+            # if not self._click_ratio_internal(0.0711, 0.1985):
+            #     print("❌ [buy_in_market] 预备点击失败")
+            #     return False
+            
+            # print("✅ [buy_in_market] 预备点击完成")
+            # import time
+            # time.sleep(0.02)  # 预备点击后的短暂延迟
+            
+            # 循环点击购买按钮 (0.8511, 0.7994)
+            for i in range(times):
+                if not self._click_ratio_internal(0.8511, 0.7994):
+                    print(f"❌ [buy_in_market] 第 {i+1} 次购买点击失败")
+                    return False
+                
+                print(f"✅ [buy_in_market] 完成第 {i+1}/{times} 次购买点击")
+                
+                # 除了最后一次，都需要延迟
+                if i < times - 1:
+                    time.sleep(delay)
+            
+            print(f"✅ [buy_in_market] 购买操作完成，数量: {buyin}/{maxin}，点击 {times} 次")
+            return True
+            
+        except Exception as e:
+            print(f"❌ [buy_in_market] 购买操作失败: {e}")
             return False
 
     def goto(self, action):
@@ -790,58 +940,6 @@ class DeltaForceClass(DeltaForceRecognize):
         
         # 这里不应该到达，但为了安全起见
         return False
-    
-    def verify_window_focus_loop(self):
-        """
-        循环验证窗口聚焦状态 - 持续重试直到成功
-        
-        这是 verify_window_focus(loop=True) 的便捷方法，
-        专门用于需要确保窗口聚焦成功的场景。
-        
-        Returns:
-            bool: 总是返回True（会持续重试直到成功）
-        """
-        return self.verify_window_focus(loop=True)
-    
-    # 为自定义行为创建专门的验证方法
-    def get_ammo_price_with_loop(self, ammo_position):
-        """
-        获取配装界面子弹价格 - 循环验证版本
-        专门用于自定义子弹行为，会持续重试窗口验证直到成功
-        """
-        # 循环验证窗口聚焦状态
-        if not self.verify_window_focus(loop=True):
-            # 理论上不会到达这里，因为loop=True会持续重试
-            return None
-        
-        # 调用原始方法，但跳过验证（因为已经验证过了）
-        return self._get_ammo_price_internal(ammo_position)
-    
-    def click_ratio_with_loop(self, x_ratio, y_ratio, do_after=0.0, do_wait=0.0):
-        """
-        根据比例坐标进行点击 - 循环验证版本
-        专门用于自定义子弹行为，会持续重试窗口验证直到成功
-        """
-        # 循环验证窗口聚焦状态
-        if not self.verify_window_focus(loop=True):
-            # 理论上不会到达这里，因为loop=True会持续重试
-            return False
-        
-        # 调用原始方法，但跳过验证（因为已经验证过了）
-        return self._click_ratio_internal(x_ratio, y_ratio, do_after, do_wait)
-    
-    def click_ammo_with_loop(self):
-        """
-        在战备界面点击子弹 - 循环验证版本
-        专门用于自定义子弹行为，会持续重试窗口验证直到成功
-        """
-        # 循环验证窗口聚焦状态
-        if not self.verify_window_focus(loop=True):
-            # 理论上不会到达这里，因为loop=True会持续重试
-            return False
-        
-        # 直接使用click_ratio方法点击子弹按钮（跳过验证）
-        return self._click_ratio_internal(0.8400, 0.7000)
 
 # 模块测试代码
 if __name__ == "__main__":

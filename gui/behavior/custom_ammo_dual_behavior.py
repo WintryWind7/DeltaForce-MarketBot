@@ -10,6 +10,7 @@ BEHAVIOR_INFO = {
     "description": "自动在主辅两个DeltaForce窗口之间切换聚焦状态，支持自定义目标价格阈值、最低有效价格和子弹位置等参数。使用0.45秒延迟（参考919非录制版）。",
     "version": "1.0.0",
     "author": "DeltaForce Team",
+    "tags": ["双端", "刷新查价"],
     "custom_config": {
         "target_price": {
             "type": "int", 
@@ -51,8 +52,11 @@ from PySide6.QtCore import QThread, Signal
 # 添加DeltaForce路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'DeltaForce'))
 
-# 导入新的管理器
-from DeltaForceManager import DeltaForceManager
+# DeltaForce导入 - 支持相对和绝对导入
+try:
+    from DeltaForce import DeltaForceManager
+except ImportError:
+    from DeltaForceManager import DeltaForceManager
 
 class CustomAmmoDualBehavior(QThread):
     """自定义子弹双端满仓行为线程"""
@@ -288,9 +292,9 @@ class CustomAmmoDualBehavior(QThread):
                 if self.should_stop or self.click_ammo_stop.is_set():
                     break
                 
-                # 执行click_ammo（使用辅助窗口）
+                # 执行click_ammo（使用辅助窗口，循环验证）
                 if self.aux_delta and hasattr(self.aux_delta, 'click_ammo'):
-                    self.aux_delta.click_ammo()
+                    self.aux_delta.click_ammo(loop=True)
                 
                 # 短暂延迟，避免过于频繁的点击
                 time.sleep(0.1)
@@ -378,13 +382,8 @@ class CustomAmmoDualBehavior(QThread):
                     cycle_count += 1
                     
                     # 主程序逻辑：使用自定义子弹位置进行价格识别（循环验证版本）
-                    if self.aux_delta and hasattr(self.aux_delta, 'get_ammo_price_with_loop'):
-                        price = self.aux_delta.get_ammo_price_with_loop(self.ammo_position)
-                    elif self.aux_delta and hasattr(self.aux_delta, 'get_ammo_price'):
-                        # 降级到普通版本
-                        price = self.aux_delta.get_ammo_price(self.ammo_position)
-                    else:
-                        price = None
+                    # 获取辅助端的子弹价格（使用循环验证）
+                    price = self.aux_delta.get_ammo_price(self.ammo_position, loop=True)
                     
                     # 更新识别统计
                     self.update_recognition_stats(price)
@@ -431,18 +430,21 @@ class CustomAmmoDualBehavior(QThread):
                                             # 窗口切换后缓冲延迟
                                             time.sleep(0.1)
                                             
-                                            # 先点击预备位置 (0.0711, 0.1985)
-                                            self.main_delta.click_ratio(0.0711, 0.1985)
-                                            self.log_message.emit("🖱️ 主端预备点击完成")
-                                            time.sleep(0.02)
+                                            # 执行交易行购买操作
+                                            # 假设购买数量为1，最大数量为999（可根据实际需求调整）
+                                            success = self.main_delta.buy_in_market(
+                                                buyin=1, 
+                                                maxin=999,
+                                                times=self.click_count, 
+                                                delay=0.05, 
+                                                buy=True,
+                                                loop=True
+                                            )
                                             
-                                            # 循环点击0.8511，0.7994，使用自定义次数
-                                            for i in range(self.click_count):
-                                                if self.should_stop:
-                                                    break
-                                                self.main_delta.click_ratio(0.8511, 0.7994)
-                                                self.log_message.emit(f"🖱️ 主端点击 {i+1}/{self.click_count}")
-                                                time.sleep(0.05)
+                                            if success:
+                                                self.log_message.emit(f"🛒 交易行购买完成，点击 {self.click_count} 次")
+                                            else:
+                                                self.log_message.emit("❌ 交易行购买失败")
                                             
                                             # 延迟1s
                                             time.sleep(1.0)
@@ -459,8 +461,7 @@ class CustomAmmoDualBehavior(QThread):
                                                 
                                                 # 特殊操作完成后，也需要执行ESC来恢复辅端状态
                                                 self.log_message.emit("🔄 特殊操作完成，执行ESC恢复辅端状态")
-                                                import pyautogui
-                                                pyautogui.press('esc')
+                                                self.aux_delta.press_key('esc', loop=True)
                                                 
                                                 time.sleep(0.45)  # 参考919非录制版延迟
                                                 
@@ -490,8 +491,7 @@ class CustomAmmoDualBehavior(QThread):
                     time.sleep(0.01)
                     
                     # 按ESC键
-                    import pyautogui
-                    pyautogui.press('esc')
+                    self.aux_delta.press_key('esc', loop=True)
                     
                     # 参考919非录制版延迟
                     time.sleep(0.45)

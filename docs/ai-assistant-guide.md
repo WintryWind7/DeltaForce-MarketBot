@@ -39,6 +39,36 @@ python main.py
 3. **通过读取文件理解项目结构**
 4. **基于代码逻辑进行推理**
 
+## 📝 编程规范
+
+### Python文件头部规范
+- ❌ **禁止添加Shebang行**: 不要写入 `#!/usr/bin/python` 或 `#!/usr/bin/env python` 等
+- ❌ **禁止Unix系统头**: Windows环境不需要任何Unix风格的头文件指示
+- ✅ **只保留编码声明**: 仅在必要时使用 `# -*- coding: utf-8 -*-`
+- ✅ **直接开始模块文档**: 文档字符串应紧跟编码声明
+
+### 正确的文件头格式
+```python
+# -*- coding: utf-8 -*-
+"""
+模块功能描述
+"""
+
+import sys
+import os
+# ... 其他代码
+```
+
+### 错误的文件头格式
+```python
+#!/usr/bin/env python3  # ❌ Windows不需要
+#!/usr/bin/python       # ❌ Windows不需要
+# -*- coding: utf-8 -*-
+"""
+模块功能描述
+"""
+```
+
 ## 🔍 窗口验证功能
 
 ### 新增功能：verify_window_focus()
@@ -81,3 +111,49 @@ delta_instance.click_ratio(0.5, 0.5)
 
 ---
 *此文档仅供AI助手参考，确保正确理解项目运行环境*
+
+## ⚠️ 常见错误与避免方法
+
+### 架构理解错误
+- ❌ **重新实现已存在的功能**: 不要重新编写已经测试过的窗口句柄获取逻辑
+- ❌ **过度抽象**: 不要创建不必要的基类或抽象层，保持代码简洁
+- ❌ **破坏现有接口**: 修改代码时要保持与现有调用方式的兼容性
+
+### 窗口句柄处理错误
+- ❌ **重复获取句柄**: UI已经通过 `get_deltaforce_processes()` 获取句柄，不要重新实现
+- ❌ **错误的方法调用**: 不要调用不存在的方法如 `get_deltaforce_processes()` (应该是UI的方法)
+- ✅ **正确做法**: 使用UI传递的句柄，通过 `BehaviorManager` 统一管理
+
+### 方法名错误
+- ❌ **假设方法存在**: 调用方法前要确认方法确实存在于对应的类中
+- ❌ **混淆不同类的方法**: 不要把UI的方法当作Delta类的方法
+- ✅ **正确做法**: 使用 `grep` 工具确认方法名和所属类
+
+### 文件管理错误
+- ❌ **创建不必要的文件**: 如 `BaseBehavior` 基类，当统一管理可以在 `BehaviorManager` 中实现时
+- ❌ **创建临时测试文件**: 不要创建 `test_*.py` 文件来调试，直接分析代码
+- ✅ **正确做法**: 通过 `BehaviorManager` 统一管理所有行为，避免多余的抽象层
+
+### 缩进和语法错误
+- ❌ **缩进不一致**: Python对缩进敏感，混用空格和制表符会导致语法错误
+- ❌ **复制粘贴时保留多余空格**: 修改代码时要注意缩进对齐
+- ✅ **正确做法**: 使用标准的4个空格缩进，检查语法正确性
+
+### 错误示例记录
+```python
+# ❌ 错误：重新实现已存在的功能
+from DeltaForce.DeltaForceWindow import DeltaForceWindow
+window_finder = DeltaForceWindow()
+window_handles = window_finder.get_deltaforce_processes()  # 方法不存在
+
+# ✅ 正确：使用UI已有的方法
+processes = self.get_deltaforce_processes()  # UI类的方法
+window_handles = [process['hwnd'] for process in processes]
+```
+
+### 最佳实践
+1. **先理解现有架构** - 不要急于重构，先理解现有代码的工作原理
+2. **最小化改动** - 能修复就不重写，能复用就不创建
+3. **保持接口一致** - 修改内部实现时保持外部接口不变
+4. **验证方法存在性** - 调用方法前用 `grep` 确认方法确实存在
+5. **统一管理原则** - 通过 `BehaviorManager` 统一管理，避免散乱的抽象

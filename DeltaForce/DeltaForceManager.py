@@ -5,7 +5,11 @@ DeltaForce双窗口管理器
 """
 
 from typing import List, Dict, Optional, Tuple
-from DeltaForceClass import DeltaForceClass
+# 尝试相对导入，如果失败则使用绝对导入
+try:
+    from .DeltaForceClass import DeltaForceClass
+except ImportError:
+    from DeltaForceClass import DeltaForceClass
 
 
 class DeltaForceManager:

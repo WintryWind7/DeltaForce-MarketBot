@@ -1,8 +1,16 @@
 {
   "custom_ammo_dual_behavior": {
-    "target_price": 1250,
-    "min_valid_price": 800,
-    "ammo_position": 2,
-    "click_count": 3
+    "target_price": 428,
+    "min_valid_price": 200,
+    "ammo_position": 4,
+    "click_count": 5
+  },
+  "purchase_refresh_behavior": {
+    "target_price": 448,
+    "min_price_threshold": 200,
+    "refresh_delay": 4.0,
+    "refresh_quantity": 1,
+    "purchase_quantity": 200,
+    "click_times": 5
   }
 }

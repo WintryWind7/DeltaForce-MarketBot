@@ -1,4 +1,8 @@
-from DeltaForceWindow import DeltaForceWindow
+# 尝试相对导入，如果失败则使用绝对导入
+try:
+    from .DeltaForceWindow import DeltaForceWindow
+except ImportError:
+    from DeltaForceWindow import DeltaForceWindow
 from typing import Tuple, List, Union
 import easyocr
 import numpy as np
