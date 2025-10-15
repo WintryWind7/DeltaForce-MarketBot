@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QPushButton, QTextEdit, QStatusBar,
     QMenuBar, QMenu, QStackedWidget, QFrame, QGridLayout,
-    QSpinBox, QDoubleSpinBox, QScrollArea, QFormLayout
+    QSpinBox, QDoubleSpinBox, QScrollArea, QFormLayout, QLineEdit
 )
 from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QFont, QAction
@@ -502,7 +502,14 @@ class MainWindow(QMainWindow):
                 # 取消数值范围限制，允许用户自由输入
                 widget.setMinimum(-2147483648)  # 32位整数最小值
                 widget.setMaximum(2147483647)   # 32位整数最大值
-                widget.setValue(default_value)
+                # 确保default_value是整数类型
+                try:
+                    int_value = int(default_value)
+                    widget.setValue(int_value)
+                except (ValueError, TypeError):
+                    # 如果转换失败，使用参数配置中的默认值
+                    fallback_default = param_config.get('default', 0)
+                    widget.setValue(int(fallback_default))
                 widget.setStyleSheet("""
                     QSpinBox {
                         padding: 5px;
@@ -521,7 +528,14 @@ class MainWindow(QMainWindow):
                 widget.setMaximum(999999999.9)   # 极大正数
                 widget.setSingleStep(param_config.get('step', 0.1))
                 widget.setDecimals(1)
-                widget.setValue(default_value)
+                # 确保default_value是浮点数类型
+                try:
+                    float_value = float(default_value)
+                    widget.setValue(float_value)
+                except (ValueError, TypeError):
+                    # 如果转换失败，使用参数配置中的默认值
+                    fallback_default = param_config.get('default', 0.0)
+                    widget.setValue(float(fallback_default))
                 widget.setStyleSheet("""
                     QDoubleSpinBox {
                         padding: 5px;
@@ -533,13 +547,36 @@ class MainWindow(QMainWindow):
                         border-color: #3498db;
                     }
                 """)
+            elif param_type == 'str':
+                widget = QLineEdit()
+                # 设置字符串值
+                str_value = str(default_value) if default_value is not None else param_config.get('default', '')
+                widget.setText(str_value)
+                widget.setStyleSheet("""
+                    QLineEdit {
+                        padding: 5px;
+                        border: 1px solid #bdc3c7;
+                        border-radius: 3px;
+                        font-size: 12px;
+                    }
+                    QLineEdit:focus {
+                        border-color: #3498db;
+                    }
+                """)
             else:
                 # 默认使用整数控件
                 widget = QSpinBox()
                 # 取消数值范围限制，允许用户自由输入
                 widget.setMinimum(-2147483648)  # 32位整数最小值
                 widget.setMaximum(2147483647)   # 32位整数最大值
-                widget.setValue(default_value)
+                # 确保default_value是整数类型
+                try:
+                    int_value = int(default_value)
+                    widget.setValue(int_value)
+                except (ValueError, TypeError):
+                    # 如果转换失败，使用参数配置中的默认值
+                    fallback_default = param_config.get('default', 0)
+                    widget.setValue(int(fallback_default))
             
             # 存储控件引用
             self.config_widgets[behavior['id']][param_name] = widget
@@ -549,6 +586,8 @@ class MainWindow(QMainWindow):
                 widget.valueChanged.connect(self.on_config_changed)
             elif isinstance(widget, QDoubleSpinBox):
                 widget.valueChanged.connect(self.on_config_changed)
+            elif isinstance(widget, QLineEdit):
+                widget.textChanged.connect(self.on_config_changed)
             
             # 创建描述标签
             if description:
@@ -581,6 +620,8 @@ class MainWindow(QMainWindow):
                     config[param_name] = widget.value()
                 elif isinstance(widget, QDoubleSpinBox):
                     config[param_name] = widget.value()
+                elif isinstance(widget, QLineEdit):
+                    config[param_name] = widget.text()
         
         return config
     
@@ -612,6 +653,8 @@ class MainWindow(QMainWindow):
                         behavior_config[param_name] = widget.value()
                     elif isinstance(widget, QDoubleSpinBox):
                         behavior_config[param_name] = widget.value()
+                    elif isinstance(widget, QLineEdit):
+                        behavior_config[param_name] = widget.text()
                 
                 if behavior_config:  # 只保存非空配置
                     configs[behavior_id] = behavior_config
@@ -638,10 +681,22 @@ class MainWindow(QMainWindow):
                 if param_name in widgets:
                     widget = widgets[param_name]
                     try:
-                        if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-                            widget.setValue(saved_value)
+                        if isinstance(widget, QSpinBox):
+                            # 整数控件需要转换为int
+                            int_value = int(saved_value)
+                            widget.setValue(int_value)
                             applied_count += 1
-                    except Exception as e:
+                        elif isinstance(widget, QDoubleSpinBox):
+                            # 浮点数控件需要转换为float
+                            float_value = float(saved_value)
+                            widget.setValue(float_value)
+                            applied_count += 1
+                        elif isinstance(widget, QLineEdit):
+                            # 字符串控件直接设置文本
+                            str_value = str(saved_value)
+                            widget.setText(str_value)
+                            applied_count += 1
+                    except (ValueError, TypeError, Exception) as e:
                         print(f"⚠️ 应用配置 {param_name}={saved_value} 失败: {e}")
             
             if applied_count > 0:

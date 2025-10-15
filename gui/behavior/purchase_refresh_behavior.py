@@ -63,6 +63,18 @@ BEHAVIOR_INFO = {
             "min": 50,
             "max": 999,
             "description": "游戏内数量选择滑条的最大值，影响数量选择精度"
+        },
+        "work_start_time": {
+            "type": "str",
+            "label": "工作开始时间",
+            "default": "00:00",
+            "description": "每日工作开始时间，格式为HH:MM（24小时制）"
+        },
+        "work_end_time": {
+            "type": "str",
+            "label": "工作结束时间",
+            "default": "05:15",
+            "description": "每日工作结束时间，格式为HH:MM（24小时制）"
         }
     }
 }
@@ -112,6 +124,14 @@ class PurchaseRefreshBehavior(QThread):
         self.click_times = self.config.get('click_times', 5)
         self.max_quantity = self.config.get('max_quantity', 200)
         
+        # 工作时间参数（从配置中读取并验证）
+        self.work_start_time = self._validate_time_format(
+            self.config.get('work_start_time', '00:00'), 'work_start_time'
+        )
+        self.work_end_time = self._validate_time_format(
+            self.config.get('work_end_time', '05:15'), 'work_end_time'
+        )
+        
         # 控制变量
         self.should_stop = False
         self.is_running = False
@@ -124,6 +144,52 @@ class PurchaseRefreshBehavior(QThread):
         
         # 日志文件
         self.log_file = f"purchase_refresh_{int(time.time())}.csv"
+    
+    def _validate_time_format(self, time_str, param_name):
+        """
+        验证时间格式是否正确
+        
+        Args:
+            time_str (str): 时间字符串，格式为HH:MM
+            param_name (str): 参数名称，用于错误提示
+            
+        Returns:
+            tuple: (hour, minute) 如果格式正确
+            
+        Raises:
+            ValueError: 如果时间格式不正确
+        """
+        try:
+            # 检查基本格式
+            if not isinstance(time_str, str) or ':' not in time_str:
+                raise ValueError(f"时间格式错误")
+            
+            # 分割并转换
+            parts = time_str.split(':')
+            if len(parts) != 2:
+                raise ValueError(f"时间格式错误，应为HH:MM格式")
+            
+            hour = int(parts[0])
+            minute = int(parts[1])
+            
+            # 验证范围
+            if not (0 <= hour <= 23):
+                raise ValueError(f"小时必须在0-23之间")
+            if not (0 <= minute <= 59):
+                raise ValueError(f"分钟必须在0-59之间")
+            
+            return (hour, minute)
+            
+        except (ValueError, TypeError) as e:
+            error_msg = f"参数 {param_name} 的时间格式无效: '{time_str}' - {str(e)}"
+            # 使用默认值并记录警告
+            if param_name == 'work_start_time':
+                default_time = (0, 0)  # 00:00
+                self.log_message.emit(f"⚠️ {error_msg}，使用默认值 00:00")
+            else:  # work_end_time
+                default_time = (5, 15)  # 05:15
+                self.log_message.emit(f"⚠️ {error_msg}，使用默认值 05:15")
+            return default_time
         
     def initialize_delta(self):
         """初始化Delta实例"""
@@ -150,6 +216,11 @@ class PurchaseRefreshBehavior(QThread):
             self.log_message.emit(f"   购买数量: {self.purchase_quantity}")
             self.log_message.emit(f"   点击次数: {self.click_times}")
             
+            # 显示工作时间配置
+            start_time_str = f"{self.work_start_time[0]:02d}:{self.work_start_time[1]:02d}"
+            end_time_str = f"{self.work_end_time[0]:02d}:{self.work_end_time[1]:02d}"
+            self.log_message.emit(f"   工作时间: {start_time_str} - {end_time_str}")
+            
             return True
             
         except Exception as e:
@@ -175,19 +246,29 @@ class PurchaseRefreshBehavior(QThread):
     def is_in_work_time(self):
         """
         检查当前是否在工作时间内
-        工作时间：每天00:00到05:15
+        使用配置的工作时间参数
         Returns:
             bool: True表示在工作时间内，False表示不在
         """
         now = datetime.now()
         current_hour = now.hour
         current_minute = now.minute
+        current_total_minutes = current_hour * 60 + current_minute
         
-        # 工作时间：00:00 到 05:15
-        if current_hour < 5 or (current_hour == 5 and current_minute <= 15):
-            return True
+        # 从配置获取工作时间
+        start_hour, start_minute = self.work_start_time
+        end_hour, end_minute = self.work_end_time
+        
+        start_total_minutes = start_hour * 60 + start_minute
+        end_total_minutes = end_hour * 60 + end_minute
+        
+        # 处理跨天的情况（如23:00到06:00）
+        if start_total_minutes <= end_total_minutes:
+            # 同一天内的时间段
+            return start_total_minutes <= current_total_minutes <= end_total_minutes
         else:
-            return False
+            # 跨天的时间段
+            return current_total_minutes >= start_total_minutes or current_total_minutes <= end_total_minutes
     
     def log_current_time_status(self):
         """记录当前时间状态"""
@@ -334,7 +415,10 @@ class PurchaseRefreshBehavior(QThread):
             self.log_message.emit("🚀 购买刷新行为开始运行")
             self.log_message.emit("⚠️ 请确保已手动切换到期望购买的子弹类型")
             self.log_message.emit("📋 流程说明: 刷新阶段 → 价格检测 → 购买阶段（如满足条件）→ 循环")
-            self.log_message.emit("⏰ 工作时间: 每天 00:00 - 05:15")
+            # 显示配置的工作时间
+            start_time_str = f"{self.work_start_time[0]:02d}:{self.work_start_time[1]:02d}"
+            end_time_str = f"{self.work_end_time[0]:02d}:{self.work_end_time[1]:02d}"
+            self.log_message.emit(f"⏰ 工作时间: 每天 {start_time_str} - {end_time_str}")
             
             # 首次检查工作时间
             self.log_current_time_status()
