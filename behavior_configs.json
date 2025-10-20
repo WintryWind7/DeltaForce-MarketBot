@@ -1,19 +1,29 @@
 {
-  "custom_ammo_dual_behavior": {
+  "DMR000X": {
     "target_price": 428,
     "min_valid_price": 200,
     "ammo_position": 4,
     "click_count": 5
   },
-  "purchase_refresh_behavior": {
+  "SMB000X": {
     "target_price": 450,
     "min_price_threshold": 200,
     "refresh_delay": 3.0,
     "refresh_quantity": 31,
     "purchase_quantity": 200,
-    "click_times": 5,
+    "click_times": 3,
     "max_quantity": 200,
     "work_start_time": "02:00",
     "work_end_time": "05:15"
+  },
+  "SSS000X": {
+    "ocr_check_interval": 0.05,
+    "auto_click": 1
+  },
+  "template_behavior": {
+    "loop_count": 10,
+    "delay_time": 1.0,
+    "work_start_time": "00:00",
+    "work_end_time": "23:59"
   }
 }

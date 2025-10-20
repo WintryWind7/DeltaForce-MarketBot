@@ -11,11 +11,30 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QScrollArea, QFormLayout, QLineEdit
 )
 from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QIcon, QFont, QAction
+from PySide6.QtGui import QIcon, QFont, QAction, QColor
 
 import sys
 import os
 import json
+
+# 自定义控件类，禁用滚轮事件
+class NoWheelSpinBox(QSpinBox):
+    """禁用滚轮事件的QSpinBox"""
+    def wheelEvent(self, event):
+        # 忽略滚轮事件，不调用父类的wheelEvent
+        event.ignore()
+
+class NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """禁用滚轮事件的QDoubleSpinBox"""
+    def wheelEvent(self, event):
+        # 忽略滚轮事件，不调用父类的wheelEvent
+        event.ignore()
+
+# 添加当前目录到路径，确保可以导入task_logger
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
 # 添加DeltaForce目录到路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'DeltaForce'))
 from DeltaForceClass import DeltaForceClass
@@ -158,6 +177,12 @@ class MainWindow(QMainWindow):
         self.nav_buttons["process"] = process_btn
         sidebar_layout.addWidget(process_btn)
         
+        # 执行记录按钮
+        history_btn = QPushButton("📊 执行记录")
+        history_btn.clicked.connect(lambda: self.switch_page("history"))
+        self.nav_buttons["history"] = history_btn
+        sidebar_layout.addWidget(history_btn)
+        
         # 设置按钮
         settings_btn = QPushButton("⚙️ 设置")
         settings_btn.clicked.connect(lambda: self.switch_page("settings"))
@@ -190,6 +215,7 @@ class MainWindow(QMainWindow):
         self.create_action_page()
         self.create_main_page()
         self.create_process_page()
+        self.create_task_history_page()  # 新增执行记录页面
         self.create_settings_page()
         self.create_log_page()
         self.create_about_page()
@@ -241,7 +267,9 @@ class MainWindow(QMainWindow):
                     "test_300_behavior": "💰",
                     "dual_window_919_behavior": "🔄",
                     "dual_window_919_record_behavior": "📹",
-                    "custom_ammo_dual_behavior": "🎯",
+                    "DMR000X": "🎯",  # 双端刷新购买
+                    "SMB000X": "💰",  # 单端购买刷新
+                    "SSS000X": "🎯",  # 单端枪皮
                     "test_basic_behavior": "🔧",
                     "custom_behavior": "📝"
                 }
@@ -498,7 +526,7 @@ class MainWindow(QMainWindow):
             
             # 根据类型创建对应的控件
             if param_type == 'int':
-                widget = QSpinBox()
+                widget = NoWheelSpinBox()
                 # 取消数值范围限制，允许用户自由输入
                 widget.setMinimum(-2147483648)  # 32位整数最小值
                 widget.setMaximum(2147483647)   # 32位整数最大值
@@ -522,12 +550,12 @@ class MainWindow(QMainWindow):
                     }
                 """)
             elif param_type == 'float':
-                widget = QDoubleSpinBox()
+                widget = NoWheelDoubleSpinBox()
                 # 取消数值范围限制，允许用户自由输入
                 widget.setMinimum(-999999999.9)  # 极大负数
                 widget.setMaximum(999999999.9)   # 极大正数
                 widget.setSingleStep(param_config.get('step', 0.1))
-                widget.setDecimals(1)
+                widget.setDecimals(3)  # 增加小数位数到3位，支持更精确的延迟设置
                 # 确保default_value是浮点数类型
                 try:
                     float_value = float(default_value)
@@ -565,7 +593,7 @@ class MainWindow(QMainWindow):
                 """)
             else:
                 # 默认使用整数控件
-                widget = QSpinBox()
+                widget = NoWheelSpinBox()
                 # 取消数值范围限制，允许用户自由输入
                 widget.setMinimum(-2147483648)  # 32位整数最小值
                 widget.setMaximum(2147483647)   # 32位整数最大值
@@ -643,7 +671,14 @@ class MainWindow(QMainWindow):
     def save_configs(self):
         """保存当前配置"""
         try:
-            configs = {}
+            # 先加载现有配置，保留未在UI中显示的行为配置
+            existing_configs = {}
+            if os.path.exists(self.config_file):
+                try:
+                    with open(self.config_file, 'r', encoding='utf-8') as f:
+                        existing_configs = json.load(f)
+                except:
+                    existing_configs = {}
             
             # 收集所有行为的当前配置
             for behavior_id, widgets in self.config_widgets.items():
@@ -657,13 +692,13 @@ class MainWindow(QMainWindow):
                         behavior_config[param_name] = widget.text()
                 
                 if behavior_config:  # 只保存非空配置
-                    configs[behavior_id] = behavior_config
+                    existing_configs[behavior_id] = behavior_config
             
             # 保存到文件
             with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(configs, f, indent=2, ensure_ascii=False)
+                json.dump(existing_configs, f, indent=2, ensure_ascii=False)
             
-            print(f"💾 配置保存成功，包含 {len(configs)} 个行为的配置")
+            print(f"💾 配置保存成功，包含 {len(existing_configs)} 个行为的配置")
             return True
             
         except Exception as e:
@@ -834,7 +869,342 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         
         self.stacked_widget.addWidget(process_page)
+    
+    def create_task_history_page(self):
+        """创建执行记录页面"""
+        from PySide6.QtWidgets import QScrollArea, QFrame
         
+        history_page = QWidget()
+        layout = QVBoxLayout(history_page)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # 页面标题
+        title = QLabel("执行记录")
+        title.setFont(QFont("", 18, QFont.Bold))
+        layout.addWidget(title)
+        
+        # 控制按钮区域
+        control_layout = QHBoxLayout()
+        
+        # 刷新按钮
+        refresh_btn = QPushButton("🔄 刷新")
+        refresh_btn.clicked.connect(self.refresh_task_history)
+        control_layout.addWidget(refresh_btn)
+        
+        # 清理按钮
+        clear_btn = QPushButton("🗑️ 清理旧记录")
+        clear_btn.clicked.connect(self.clear_old_task_records)
+        control_layout.addWidget(clear_btn)
+        
+        control_layout.addStretch()
+        layout.addLayout(control_layout)
+        
+        # 创建滚动区域
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        # 创建容器widget
+        self.task_history_container = QWidget()
+        self.task_history_layout = QVBoxLayout(self.task_history_container)
+        self.task_history_layout.setSpacing(15)
+        self.task_history_layout.setContentsMargins(10, 10, 10, 10)
+        
+        scroll_area.setWidget(self.task_history_container)
+        layout.addWidget(scroll_area)
+        
+        # 统计信息
+        self.history_stats_label = QLabel("统计信息将在此显示")
+        self.history_stats_label.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 5px;")
+        layout.addWidget(self.history_stats_label)
+        
+        self.stacked_widget.addWidget(history_page)
+        
+        # 初始加载数据
+        self.refresh_task_history()
+    
+    def refresh_task_history(self):
+        """刷新执行记录"""
+        try:
+            from task_logger import get_task_logger
+            from datetime import datetime
+            
+            task_logger = get_task_logger()
+            tasks = task_logger.get_recent_tasks(20)
+            
+            # 清空现有卡片
+            for i in reversed(range(self.task_history_layout.count())):
+                child = self.task_history_layout.itemAt(i).widget()
+                if child:
+                    child.setParent(None)
+            
+            # 创建任务卡片
+            for task in tasks:
+                card = self.create_task_card(task)
+                self.task_history_layout.addWidget(card)
+            
+            # 添加弹性空间
+            self.task_history_layout.addStretch()
+            
+            # 更新统计信息
+            self.update_history_statistics()
+            
+        except Exception as e:
+            self.history_stats_label.setText(f"❌ 加载执行记录失败: {e}")
+    
+    def create_task_card(self, task):
+        """创建任务卡片"""
+        from PySide6.QtWidgets import QFrame
+        from datetime import datetime
+        
+        # 创建卡片容器
+        card = QFrame()
+        card.setFrameStyle(QFrame.Box)
+        card.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                padding: 10px;
+            }
+            QFrame:hover {
+                border-color: #007acc;
+                background-color: #f8f9fa;
+            }
+        """)
+        card.setFixedHeight(120)
+        card.setCursor(Qt.PointingHandCursor)
+        
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(15, 10, 15, 10)
+        layout.setSpacing(5)
+        
+        # 解析数据
+        script_id = task.get('script_id', 'UNKNOWN')
+        start_time = task.get('start_time', '')
+        duration = task.get('duration', 0)
+        status = task.get('status', 'unknown')
+        
+        # 格式化时间
+        if start_time:
+            try:
+                dt = datetime.fromisoformat(start_time)
+                time_str = dt.strftime("%m-%d %H:%M:%S")
+            except:
+                time_str = start_time[:16] if len(start_time) > 16 else start_time
+        else:
+            time_str = "未知时间"
+        
+        # 格式化时长
+        if duration > 3600:
+            duration_str = f"{duration/3600:.1f}小时"
+        elif duration > 60:
+            duration_str = f"{duration/60:.1f}分钟"
+        else:
+            duration_str = f"{duration:.1f}秒"
+        
+        # 标题行：时间 + 行为ID
+        title_layout = QHBoxLayout()
+        title_label = QLabel(f"{time_str} - {script_id}")
+        title_label.setFont(QFont("", 12, QFont.Bold))
+        title_layout.addWidget(title_label)
+        
+        # 状态标签
+        status_label = QLabel(status)
+        status_label.setFont(QFont("", 10))
+        if status == 'completed':
+            status_label.setStyleSheet("color: green; background-color: #e8f5e8; padding: 2px 6px; border-radius: 3px;")
+        elif status == 'interrupted':
+            status_label.setStyleSheet("color: orange; background-color: #fff3cd; padding: 2px 6px; border-radius: 3px;")
+        else:
+            status_label.setStyleSheet("color: red; background-color: #f8d7da; padding: 2px 6px; border-radius: 3px;")
+        title_layout.addWidget(status_label)
+        
+        layout.addLayout(title_layout)
+        
+        # 摘要统计数据
+        statistics = task.get('statistics', {})
+        summary_parts = []
+        
+        if statistics.get('refresh_count', 0) > 0:
+            summary_parts.append(f"刷新: {statistics['refresh_count']}")
+        if statistics.get('purchase_count', 0) > 0:
+            summary_parts.append(f"购买: {statistics['purchase_count']}")
+        if statistics.get('low_price_found_count', 0) > 0:
+            summary_parts.append(f"低价: {statistics['low_price_found_count']}")
+        total_cost = statistics.get('total_cost', 0)
+        if total_cost and isinstance(total_cost, (int, float)) and total_cost != 0:
+            summary_parts.append(f"花费: {total_cost:,}")
+        
+        summary_parts.append(f"时长: {duration_str}")
+        
+        summary_text = " | ".join(summary_parts) if summary_parts else "无统计数据"
+        
+        summary_label = QLabel(summary_text)
+        summary_label.setFont(QFont("", 10))
+        summary_label.setStyleSheet("color: #666;")
+        summary_label.setWordWrap(True)
+        layout.addWidget(summary_label)
+        
+        # 点击事件
+        card.mousePressEvent = lambda event: self.show_task_details(task)
+        
+        return card
+    
+    def show_task_details(self, task):
+        """显示任务详细信息"""
+        from PySide6.QtWidgets import QDialog, QTextEdit, QDialogButtonBox
+        from datetime import datetime
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("任务详细信息")
+        dialog.setMinimumSize(600, 500)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # 创建文本显示区域
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 10))
+        
+        # 构建详细信息文本
+        details = []
+        
+        # 基本信息
+        details.append("=" * 60)
+        details.append("📋 任务基本信息")
+        details.append("=" * 60)
+        details.append(f"任务ID: {task.get('task_id', '未知')}")
+        details.append(f"脚本ID: {task.get('script_id', '未知')}")
+        details.append(f"开始时间: {task.get('start_time', '未知')}")
+        details.append(f"结束时间: {task.get('end_time', '未知')}")
+        details.append(f"运行时长: {task.get('duration', 0):.1f}秒")
+        details.append(f"状态: {task.get('status', '未知')}")
+        details.append("")
+        
+        # 统计数据
+        statistics = task.get('statistics', {})
+        if statistics:
+            details.append("=" * 60)
+            details.append("📊 统计数据")
+            details.append("=" * 60)
+            
+            # 基础统计
+            details.append(f"刷新次数: {statistics.get('refresh_count', 0)}")
+            details.append(f"购买次数: {statistics.get('purchase_count', 0)}")
+            details.append(f"发现低价次数: {statistics.get('low_price_found_count', 0)}")
+            
+            # 余额信息
+            initial_balance = statistics.get('initial_balance')
+            if initial_balance is not None and isinstance(initial_balance, (int, float)):
+                details.append(f"初始余额: {initial_balance:,}")
+            final_balance = statistics.get('final_balance')
+            if final_balance is not None and isinstance(final_balance, (int, float)):
+                details.append(f"最终余额: {final_balance:,}")
+            balance_change = statistics.get('balance_change')
+            if balance_change is not None and isinstance(balance_change, (int, float)):
+                details.append(f"余额变化: {balance_change:+,}")
+            balance_change_percentage = statistics.get('balance_change_percentage')
+            if balance_change_percentage is not None and isinstance(balance_change_percentage, (int, float)):
+                details.append(f"变化百分比: {balance_change_percentage:+.2f}%")
+            
+            # 花费信息
+            total_cost = statistics.get('total_cost')
+            if total_cost is not None and isinstance(total_cost, (int, float)):
+                details.append(f"总花费: {total_cost:,}")
+            refresh_cost_total = statistics.get('refresh_cost_total')
+            if refresh_cost_total is not None and isinstance(refresh_cost_total, (int, float)):
+                details.append(f"刷新花费: {refresh_cost_total:,}")
+            purchase_cost_total = statistics.get('purchase_cost_total')
+            if purchase_cost_total is not None and isinstance(purchase_cost_total, (int, float)):
+                details.append(f"购买花费: {purchase_cost_total:,}")
+            
+            # 效率信息
+            refresh_efficiency = statistics.get('refresh_efficiency')
+            if refresh_efficiency is not None and isinstance(refresh_efficiency, (int, float)):
+                details.append(f"发现低价效率: {refresh_efficiency:.1f}%")
+            
+            # 配置信息
+            details.append(f"目标价格: {statistics.get('target_price', '未知')}")
+            details.append(f"最低价格阈值: {statistics.get('min_price_threshold', '未知')}")
+            details.append(f"工作时间范围: {statistics.get('work_time_range', '未知')}")
+            details.append("")
+        
+        # 摘要
+        summary = task.get('summary', '')
+        if summary:
+            details.append("=" * 60)
+            details.append("📝 执行摘要")
+            details.append("=" * 60)
+            details.append(summary)
+        
+        text_edit.setPlainText("\n".join(details))
+        layout.addWidget(text_edit)
+        
+        # 按钮
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        button_box.accepted.connect(dialog.accept)
+        layout.addWidget(button_box)
+        
+        dialog.exec()
+    
+    def update_history_statistics(self):
+        """更新统计信息"""
+        try:
+            from task_logger import get_task_logger
+            
+            task_logger = get_task_logger()
+            stats = task_logger.get_statistics_summary()
+            
+            total_tasks = stats.get('total_tasks', 0)
+            scripts_stats = stats.get('scripts', {})
+            
+            stats_text = f"📊 总任务数: {total_tasks}"
+            
+            for script_id, script_stats in scripts_stats.items():
+                count = script_stats.get('count', 0)
+                success_count = script_stats.get('success_count', 0)
+                success_rate = (success_count / count * 100) if count > 0 else 0
+                avg_duration = script_stats.get('total_duration', 0) / count if count > 0 else 0
+                
+                stats_text += f" | {script_id}: {count}次 (成功率: {success_rate:.1f}%, 平均时长: {avg_duration:.1f}秒)"
+            
+            self.history_stats_label.setText(stats_text)
+            
+        except Exception as e:
+            self.history_stats_label.setText(f"❌ 统计信息更新失败: {e}")
+    
+    def clear_old_task_records(self):
+        """清理旧的任务记录"""
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            from task_logger import get_task_logger
+            
+            reply = QMessageBox.question(
+                self, 
+                "确认清理", 
+                "是否清理30天前的任务记录？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                task_logger = get_task_logger()
+                cleared_count = task_logger.clear_old_records(30)
+                
+                QMessageBox.information(
+                    self,
+                    "清理完成",
+                    f"已清理 {cleared_count} 条旧记录"
+                )
+                
+                # 刷新显示
+                self.refresh_task_history()
+                
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "错误", f"清理失败: {e}")
+    
     def create_settings_page(self):
         """创建设置页面"""
         settings_page = QWidget()
@@ -961,11 +1331,15 @@ class MainWindow(QMainWindow):
                 button.setStyleSheet(button.styleSheet())  # 刷新样式
         
         # 切换页面
-        page_index = {"action": 0, "main": 1, "process": 2, "settings": 3, "log": 4, "about": 5}
+        page_index = {"action": 0, "main": 1, "process": 2, "history": 3, "settings": 4, "log": 5, "about": 6}
         if page_name in page_index:
             self.stacked_widget.setCurrentIndex(page_index[page_name])
             self.current_page = page_name
             self.status_bar.showMessage(f"当前页面: {page_name}")
+            
+            # 如果切换到执行记录页面，自动刷新数据
+            if page_name == "history":
+                self.refresh_task_history()
             
             # 如果切换到行为页面，重置到选择界面
             if page_name == "action":

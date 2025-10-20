@@ -111,6 +111,9 @@ class BehaviorManager:
                 elif self.single_delta:
                     behavior_instance.set_delta_manager(self.single_delta)
             
+            # 添加窗口预切换功能
+            self._add_window_pre_switch(behavior_instance, window_handles)
+            
             # 确保所有行为都有stop_behavior方法
             if not hasattr(behavior_instance, 'stop_behavior'):
                 # 动态添加stop_behavior方法
@@ -131,6 +134,88 @@ class BehaviorManager:
             print(f"创建行为实例失败: {e}")
             return None
     
+    def _add_window_pre_switch(self, behavior_instance, window_handles):
+        """
+        为行为实例添加窗口预切换功能
+        在原有run方法前添加窗口切换和等待逻辑
+        """
+        import time
+        
+        # 保存原始的run方法
+        original_run = behavior_instance.run
+        
+        def enhanced_run():
+            try:
+                # 发送日志消息（如果支持）
+                if hasattr(behavior_instance, 'log_message'):
+                    behavior_instance.log_message.emit("🔄 [窗口管理] 准备切换到目标窗口...")
+                
+                # 保持原有的3秒停顿
+                if hasattr(behavior_instance, 'log_message'):
+                    behavior_instance.log_message.emit("⏱️ [窗口管理] 等待3秒后开始执行...")
+                time.sleep(3.0)
+                
+                # 切换到指定窗口
+                success = self._switch_to_target_window(behavior_instance, window_handles)
+                
+                if success:
+                    if hasattr(behavior_instance, 'log_message'):
+                        behavior_instance.log_message.emit("✅ [窗口管理] 窗口切换成功，等待1秒稳定...")
+                    # 等待1秒让窗口稳定
+                    time.sleep(1.0)
+                    
+                    if hasattr(behavior_instance, 'log_message'):
+                        behavior_instance.log_message.emit("🚀 [窗口管理] 开始执行行为...")
+                else:
+                    if hasattr(behavior_instance, 'log_message'):
+                        behavior_instance.log_message.emit("⚠️ [窗口管理] 窗口切换失败，但继续执行...")
+                
+                # 调用原始的run方法
+                return original_run()
+                
+            except Exception as e:
+                if hasattr(behavior_instance, 'log_message'):
+                    behavior_instance.log_message.emit(f"❌ [窗口管理] 预处理失败: {e}")
+                # 即使预处理失败，也尝试执行原始run方法
+                return original_run()
+        
+        # 替换run方法
+        behavior_instance.run = enhanced_run
+    
+    def _switch_to_target_window(self, behavior_instance, window_handles):
+        """
+        切换到目标窗口
+        """
+        try:
+            if not window_handles:
+                return False
+            
+            # 获取主窗口句柄
+            target_handle = window_handles[0]
+            
+            # 尝试通过Delta实例切换窗口
+            if hasattr(behavior_instance, 'delta') and behavior_instance.delta:
+                if hasattr(behavior_instance.delta, 'focus_window'):
+                    return behavior_instance.delta.focus_window()
+            
+            # 如果没有Delta实例，尝试直接使用Windows API
+            try:
+                import ctypes
+                # 将窗口置于前台
+                ctypes.windll.user32.SetForegroundWindow(target_handle)
+                # 确保窗口不是最小化状态
+                ctypes.windll.user32.ShowWindow(target_handle, 9)  # SW_RESTORE
+                return True
+            except Exception as api_error:
+                if hasattr(behavior_instance, 'log_message'):
+                    behavior_instance.log_message.emit(f"⚠️ [窗口管理] Windows API切换失败: {api_error}")
+                return False
+                
+        except Exception as e:
+            if hasattr(behavior_instance, 'log_message'):
+                behavior_instance.log_message.emit(f"❌ [窗口管理] 切换窗口时发生错误: {e}")
+            return False
+    
     def load_behaviors(self):
         """加载所有behavior模块"""
         self.behaviors = {}
@@ -140,7 +225,10 @@ class BehaviorManager:
         
         # 遍历behavior目录中的所有.py文件
         for filename in os.listdir(self.behavior_dir):
-            if filename.endswith('_behavior.py') and filename != '__init__.py':
+            # 匹配 _behavior.py 结尾的文件或者 SMB000X.py、DMR000X.py、SSS000X.py 等代码ID文件
+            if ((filename.endswith('_behavior.py') or 
+                 filename.startswith(('SMB', 'DMR', 'SSS')) and filename.endswith('.py')) and 
+                filename != '__init__.py'):
                 behavior_id = filename[:-3]  # 移除.py扩展名
                 
                 try:
@@ -201,9 +289,13 @@ class BehaviorManager:
         self.load_behaviors()
     
     def get_behavior_list(self) -> List[Dict[str, Any]]:
-        """获取行为列表，按标题排序"""
+        """获取行为列表，按标题排序（过滤掉模板行为）"""
         behavior_list = []
         for behavior_id, info in self.behaviors.items():
+            # 过滤掉模板行为（template_behavior）
+            if behavior_id == 'template_behavior':
+                continue
+                
             behavior_list.append({
                 'id': behavior_id,
                 'title': info['title'],

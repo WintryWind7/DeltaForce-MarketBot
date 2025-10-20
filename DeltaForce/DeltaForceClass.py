@@ -54,6 +54,7 @@ class DeltaForceClass(DeltaForceRecognize):
         get_ammo_price(ammo_position): 获取配装界面指定位置的子弹价格
         click_ammo(): 在战备界面点击子弹按钮
         click_ratio(x_ratio, y_ratio, do_after, do_wait): 根据比例坐标进行点击的封装方法
+        move_ratio(x_ratio, y_ratio, do_after): 根据比例坐标移动鼠标的封装方法
         press_key(key, loop): 按键操作方法，包含窗口聚焦验证
         buy_in_market(buyin, maxin, times, delay, buy, loop): 交易行购买操作，支持数量选择和循环点击
         goto(action): 通用位置点击方法，支持多种预定义操作
@@ -78,6 +79,9 @@ class DeltaForceClass(DeltaForceRecognize):
         
         # 导入pyautogui并借用其DPI感知功能，确保在高DPI显示器上正确工作
         import pyautogui
+        
+        # 禁用pyautogui的默认延迟，让我们的脚本完全控制延迟时间
+        pyautogui.PAUSE = 0
         
         # 初始化窗口属性为默认值，等待手动切换
         self.target_window_handle = None
@@ -144,9 +148,9 @@ class DeltaForceClass(DeltaForceRecognize):
         
         try:
             # 步骤1: 点击余额按钮位置，触发余额显示界面
-            time.sleep(0.2)  # 预等待，确保界面稳定
+            time.sleep(0.1)  # 预等待，确保界面稳定
             self.click_ratio(m3_ratio[0], m3_ratio[1])
-            time.sleep(0.3)  # 等待游戏界面响应，确保余额信息完全加载
+            time.sleep(0.1)  # 等待游戏界面响应，确保余额信息完全加载
             
             # 步骤2: 将比例坐标转换为屏幕绝对坐标
             m4_screen = self.ratio_to_screen_coords(m4_ratio[0], m4_ratio[1])  # 截图区域左上角
@@ -548,9 +552,54 @@ class DeltaForceClass(DeltaForceRecognize):
         
         return self._click_ratio_internal(x_ratio, y_ratio, do_after, do_wait)
     
-    def _click_ratio_internal(self, x_ratio, y_ratio, do_after=0.0, do_wait=0.0):
+    def move_ratio(self, x_ratio, y_ratio, do_after=0.0, loop=False):
         """
-        根据比例坐标进行点击的内部实现（跳过窗口验证）
+        根据比例坐标移动鼠标的封装方法
+        
+        该方法提供了一个统一的接口来处理基于比例坐标的鼠标移动操作。
+        自动将比例坐标转换为屏幕坐标，然后移动鼠标到目标位置。
+        
+        Args:
+            x_ratio (float): X轴比例坐标，范围0.0-1.0
+            y_ratio (float): Y轴比例坐标，范围0.0-1.0
+            do_after (float): 移动前等待时间，默认0.0秒（立即移动）
+            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
+        
+        Returns:
+            bool: 移动成功返回True，失败返回False
+            
+        Example:
+            >>> delta = DeltaForceClass()
+            >>> # 立即移动到屏幕中心位置
+            >>> delta.move_ratio(0.5, 0.5)
+            >>> # 等待1秒后移动到右上角
+            >>> delta.move_ratio(0.9, 0.1, do_after=1.0)
+        """
+        # 验证窗口聚焦状态
+        if not self.verify_window_focus(loop=loop):
+            error_msg = f"❌ [move_ratio] 窗口验证失败，拒绝执行移动操作 ({x_ratio}, {y_ratio})"
+            print(error_msg)
+            if self.log_callback:
+                self.log_callback(error_msg)
+            return False
+        
+        return self._move_ratio_internal(x_ratio, y_ratio, do_after)
+    
+    def click(self):
+        """
+        简单的左键点击方法
+        在当前鼠标位置执行左键点击，不进行任何坐标转换或窗口验证
+        """
+        try:
+            pyautogui.click()
+            return True
+        except Exception as e:
+            print(f"点击操作失败: {e}")
+            return False
+    
+    def _move_ratio_internal(self, x_ratio, y_ratio, do_after=0.0):
+        """
+        根据比例坐标移动鼠标的内部实现（跳过窗口验证）
         """
         try:
             # 验证坐标范围
@@ -558,22 +607,41 @@ class DeltaForceClass(DeltaForceRecognize):
                 print(f"坐标超出范围: x_ratio={x_ratio}, y_ratio={y_ratio}")
                 return False
             
-            # 点击前等待
+            # 移动前等待
             if do_after > 0:
                 time.sleep(do_after)
             
             # 将比例坐标转换为屏幕坐标
             screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
             
-            # 执行点击操作
+            # 执行移动操作
             pyautogui.moveTo(screen_coords[0], screen_coords[1])
+            
+            return True
+            
+        except Exception as e:
+            print(f"移动操作失败: {e}")
+            return False
+    
+    def _click_ratio_internal(self, x_ratio, y_ratio, do_after=0.0, do_wait=0.0):
+        """
+        根据比例坐标进行点击的内部实现（跳过窗口验证）
+        """
+        try:
+            # 先移动鼠标到目标位置
+            if not self._move_ratio_internal(x_ratio, y_ratio, do_after):
+                return False
+            
+            # 将比例坐标转换为屏幕坐标（用于点击）
+            screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
+            
+            # 执行点击操作（鼠标已经在正确位置了）
             pyautogui.click(screen_coords[0], screen_coords[1])
             
             # 点击后等待
             if do_wait > 0:
                 time.sleep(do_wait)
             
-            print(f"成功点击比例坐标 ({x_ratio}, {y_ratio}) -> 屏幕坐标 {screen_coords}")
             return True
             
         except Exception as e:
@@ -605,7 +673,7 @@ class DeltaForceClass(DeltaForceRecognize):
             print(f"按键操作失败: {e}")
             return False
 
-    def buy_in_market(self, buyin, maxin, times=1, delay=0.07, buy=True, loop=False):
+    def buy_in_market(self, buyin, maxin, times=1, delay=0.1, buy=True, loop=False):
         """
         交易行购买操作
         
@@ -615,7 +683,7 @@ class DeltaForceClass(DeltaForceRecognize):
             buyin (int): 购买数量（必须参数）
             maxin (int): 最大数量（必须参数）
             times (int): 循环点击购买按钮的次数，默认1次（不循环）
-            delay (float): 每次点击之间的延迟时间（秒），默认0.07秒
+            delay (float): 每次点击之间的延迟时间（秒），默认0.1秒
             buy (bool): 是否执行实际购买操作，默认True。False时仅选择数量，用于测试
             loop (bool): 是否循环验证窗口聚焦直到成功，默认False
         
@@ -830,7 +898,6 @@ class DeltaForceClass(DeltaForceRecognize):
             ctypes.windll.user32.SetForegroundWindow(self.target_window_handle)
             ctypes.windll.user32.ShowWindow(self.target_window_handle, 9)  # SW_RESTORE
             
-            print(f"✅ 已聚焦窗口: {self.target_window_handle}")
             return True
             
         except Exception as e:
@@ -873,10 +940,7 @@ class DeltaForceClass(DeltaForceRecognize):
             print("❌ [窗口验证] 未绑定任何窗口")
             return False
         
-        if loop:
-            print(f"🔍 [窗口验证] 开始循环验证窗口聚焦状态 (目标窗口: {self.target_window_handle})")
-        else:
-            print(f"🔍 [窗口验证] 开始验证窗口聚焦状态 (目标窗口: {self.target_window_handle})")
+        # 静默验证，不输出日志
         
         retry_count = 0
         max_retries = 1 if not loop else float('inf')  # 非循环模式只尝试1次
@@ -899,7 +963,7 @@ class DeltaForceClass(DeltaForceRecognize):
                     return False
             
             # 2. 短暂等待聚焦生效
-            time.sleep(0.1)
+            time.sleep(0.01)
             
             # 3. 检测当前前台窗口
             current_foreground = self.get_foreground_window_handle()
@@ -914,13 +978,6 @@ class DeltaForceClass(DeltaForceRecognize):
             
             # 4. 验证是否为目标窗口
             if current_foreground == self.target_window_handle:
-                if loop and retry_count > 1:
-                    success_msg = f"✅ [窗口验证] 循环验证成功! 第 {retry_count} 次尝试成功 (当前前台: {current_foreground})"
-                    print(success_msg)
-                    if self.log_callback:
-                        self.log_callback(success_msg)
-                else:
-                    print(f"✅ [窗口验证] 窗口聚焦验证成功 (当前前台: {current_foreground})")
                 return True
             else:
                 if loop:
