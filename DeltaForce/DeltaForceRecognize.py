@@ -85,9 +85,20 @@ class OCR:
         # 使用默认模型目录，其中包含检测模型和自定义识别模型
         import os
         model_dir = os.path.expanduser("~/.EasyOCR/model")
-        self.reader = easyocr.Reader(languages, gpu=False, 
+        self.reader = easyocr.Reader(languages, gpu=True, 
                                    model_storage_directory=model_dir, 
                                    download_enabled=False)
+        
+        # 检查GPU状态
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+                print(f"✅ OCR使用GPU加速: {gpu_name}")
+            else:
+                print("⚠️ OCR GPU不可用，使用CPU模式")
+        except ImportError:
+            print("⚠️ 无法检测GPU状态（PyTorch未安装）")
     
     def _screenshot(self, top_left: Tuple[int, int], bottom_right: Tuple[int, int]) -> np.ndarray:
         """

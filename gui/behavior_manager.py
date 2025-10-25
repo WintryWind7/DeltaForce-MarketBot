@@ -225,9 +225,9 @@ class BehaviorManager:
         
         # 遍历behavior目录中的所有.py文件
         for filename in os.listdir(self.behavior_dir):
-            # 匹配 _behavior.py 结尾的文件或者 SMB000X.py、DMR000X.py、SSS000X.py 等代码ID文件
+            # 匹配 _behavior.py 结尾的文件或者 S、D 开头的代码ID文件（如SMB000X.py、DMR000X.py、SSS000X.py、SPR000X.py等）
             if ((filename.endswith('_behavior.py') or 
-                 filename.startswith(('SMB', 'DMR', 'SSS')) and filename.endswith('.py')) and 
+                 (filename.startswith(('S', 'D')) and filename.endswith('.py'))) and 
                 filename != '__init__.py'):
                 behavior_id = filename[:-3]  # 移除.py扩展名
                 

@@ -79,7 +79,7 @@ def test_calculation_only(max_quantity, test_quantities):
         print(f"   点击位置: ({click_x_ratio:.4f}, {y_ratio})")
         print(f"   相对偏移: {(click_x_ratio - left_ratio) / (right_ratio - left_ratio):6.2%}")
         print()
-
+import pyautogui
 def test_with_window(delta, max_quantity, test_quantities):
     """
     在有窗口的情况下测试实际点击
@@ -100,7 +100,7 @@ def test_with_window(delta, max_quantity, test_quantities):
                 buy=False,  # 仅测试数量选择，不执行购买
                 loop=False
             )
-            
+
             if success:
                 print(f"✅ 数量 {quantity} 选择测试成功")
             else:

@@ -7,6 +7,7 @@ import pyautogui
 import time
 import numpy as np
 from PIL import Image
+import pyautogui
 
 class DeltaForceClass(DeltaForceRecognize):
     """
@@ -632,11 +633,11 @@ class DeltaForceClass(DeltaForceRecognize):
             if not self._move_ratio_internal(x_ratio, y_ratio, do_after):
                 return False
             
-            # 将比例坐标转换为屏幕坐标（用于点击）
-            screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
+            # 移动和点击之间添加0.1秒延迟
+            time.sleep(0.1)
             
-            # 执行点击操作（鼠标已经在正确位置了）
-            pyautogui.click(screen_coords[0], screen_coords[1])
+            # 直接在当前鼠标位置点击，避免重复计算坐标
+            pyautogui.click()
             
             # 点击后等待
             if do_wait > 0:
@@ -739,7 +740,6 @@ class DeltaForceClass(DeltaForceRecognize):
                 return True
             
             # 短暂延迟后执行购买操作
-            import time
             time.sleep(0.1)
             
             # 先点击预备位置 (0.0711, 0.1985) - 已被用户注释掉

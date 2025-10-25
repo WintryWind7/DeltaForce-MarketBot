@@ -77,6 +77,12 @@ BEHAVIOR_INFO = {
             "label": "工作结束时间",
             "default": "05:15",
             "description": "每日工作结束时间，格式为HH:MM（24小时制）"
+        },
+        "auto_shutdown": {
+            "type": "bool",
+            "label": "自动关机",
+            "default": False,
+            "description": "到达工作结束时间时自动关闭电脑"
         }
     }
 }
@@ -133,6 +139,7 @@ class PurchaseRefreshBehavior(QThread):
         self.work_end_time = self._validate_time_format(
             self.config.get('work_end_time', '05:15'), 'work_end_time'
         )
+        self.auto_shutdown = self.config.get('auto_shutdown', False)
         
         # 控制变量
         self.should_stop = False
@@ -143,6 +150,9 @@ class PurchaseRefreshBehavior(QThread):
         self.refresh_count = 0
         self.purchase_count = 0
         self.low_price_found_count = 0
+        
+        # 价格差为0的连续计数器（用于检测仓库满的情况）
+        self.zero_price_diff_count = 0
         
         # 余额跟踪变量
         self.initial_balance = None  # 初始余额
@@ -255,6 +265,7 @@ class PurchaseRefreshBehavior(QThread):
             start_time_str = f"{self.work_start_time[0]:02d}:{self.work_start_time[1]:02d}"
             end_time_str = f"{self.work_end_time[0]:02d}:{self.work_end_time[1]:02d}"
             self.log_message.emit(f"   工作时间: {start_time_str} - {end_time_str}")
+            self.log_message.emit(f"   自动关机: {'启用' if self.auto_shutdown else '禁用'}")
             
             return True
             
@@ -305,6 +316,27 @@ class PurchaseRefreshBehavior(QThread):
             # 跨天的时间段
             return current_total_minutes >= start_total_minutes or current_total_minutes <= end_total_minutes
     
+    def is_in_shutdown_window(self):
+        """
+        检查当前时间是否在关机时间窗口内（工作结束时间 到 工作结束时间+5分钟）
+        Returns:
+            bool: True表示在关机窗口内，False表示不在
+        """
+        now = datetime.now()
+        current_hour = now.hour
+        current_minute = now.minute
+        current_total_minutes = current_hour * 60 + current_minute
+        
+        # 从配置获取工作结束时间
+        end_hour, end_minute = self.work_end_time
+        end_total_minutes = end_hour * 60 + end_minute
+        
+        # 关机窗口：工作结束时间 到 工作结束时间+5分钟
+        shutdown_start = end_total_minutes
+        shutdown_end = end_total_minutes + 5  # +5分钟
+        
+        return shutdown_start <= current_total_minutes <= shutdown_end
+    
     def log_current_time_status(self):
         """记录当前时间状态"""
         now = datetime.now()
@@ -313,6 +345,39 @@ class PurchaseRefreshBehavior(QThread):
             self.log_message.emit(f"⏰ 当前时间: {time_str} - ✅ 在工作时间内，继续执行")
         else:
             self.log_message.emit(f"⏰ 当前时间: {time_str} - ⏸️ 不在工作时间内，等待中...")
+    
+    def shutdown_computer(self):
+        """关闭电脑（仅支持Windows系统）"""
+        try:
+            import subprocess
+            
+            self.log_message.emit("🔌 [SMB000X] 工作结束时间已到，准备关闭电脑...")
+            self.log_message.emit("⚠️ [SMB000X] 10秒后将自动关机，请保存重要数据！")
+            
+            # 给用户10秒时间保存数据
+            for i in range(10, 0, -1):
+                if self.should_stop:  # 如果用户手动停止，取消关机
+                    self.log_message.emit("🛑 [SMB000X] 检测到停止信号，取消自动关机")
+                    return False
+                self.log_message.emit(f"⏰ [SMB000X] 关机倒计时: {i} 秒...")
+                time.sleep(1)
+            
+            if self.should_stop:  # 最后再检查一次
+                self.log_message.emit("🛑 [SMB000X] 检测到停止信号，取消自动关机")
+                return False
+            
+            # 执行Windows关机命令
+            self.log_message.emit("🔌 [SMB000X] 正在关闭Windows系统...")
+            subprocess.run(["shutdown", "/s", "/t", "0"], check=True)
+            
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            self.log_message.emit(f"❌ [SMB000X] 关机命令执行失败: {e}")
+            return False
+        except Exception as e:
+            self.log_message.emit(f"❌ [SMB000X] 关机过程发生错误: {e}")
+            return False
     
     def wait_for_work_time(self):
         """等待工作时间，每分钟检查一次"""
@@ -532,7 +597,9 @@ class PurchaseRefreshBehavior(QThread):
                 'refresh_efficiency': None,
                 'target_price': self.target_price,
                 'min_price_threshold': self.min_price_threshold,
-                'work_time_range': self._format_work_time_range()
+                'work_time_range': self._format_work_time_range(),
+                'auto_shutdown': self.auto_shutdown,
+                'zero_price_diff_count': self.zero_price_diff_count
             }
             
             # 添加详细价格统计数据
@@ -623,6 +690,9 @@ class PurchaseRefreshBehavior(QThread):
             # 确保刷新数量至少为1
             actual_refresh_quantity = max(1, self.refresh_quantity)
             
+            # 购买前延迟0.3秒
+            time.sleep(0.3)
+            
             success = self.delta.buy_in_market(
                 buyin=actual_refresh_quantity,  # 使用配置的刷新数量
                 maxin=self.max_quantity,  # 使用配置的最大值
@@ -631,6 +701,9 @@ class PurchaseRefreshBehavior(QThread):
                 buy=True,
                 loop=True
             )
+            
+            # 购买后延迟0.3秒
+            time.sleep(0.3)
             
             if success:
                 self.log_message.emit(f"🔄 刷新阶段购买完成 (数量: {actual_refresh_quantity})")
@@ -756,7 +829,17 @@ class PurchaseRefreshBehavior(QThread):
                     if self.should_stop:
                         break
                     
-                    # 在每次循环开始时检查工作时间（一阶段开始前）
+                    # 检查是否在关机时间窗口内（工作结束时间到工作结束时间+5分钟）
+                    if self.is_in_shutdown_window() and self.auto_shutdown:
+                        self.log_message.emit("🔌 [SMB000X] 检测到关机时间窗口且启用自动关机")
+                        if self.shutdown_computer():
+                            # 关机成功，程序应该会被系统终止
+                            break
+                        else:
+                            # 关机失败，程序继续运行
+                            self.log_message.emit("⚠️ [SMB000X] 自动关机失败，程序继续运行")
+                    
+                    # 检查是否在工作时间内
                     if not self.is_in_work_time():
                         self.log_message.emit("⏸️ 已超出工作时间，进入等待模式...")
                         self.wait_for_work_time()
@@ -788,6 +871,21 @@ class PurchaseRefreshBehavior(QThread):
                         # 检查停止标志（内部循环中也要检查）
                         if self.should_stop:
                             break
+                        
+                        # 在内部循环中也检查关机时间窗口
+                        if self.is_in_shutdown_window() and self.auto_shutdown:
+                            self.log_message.emit("🔌 [SMB000X] 内部循环检测到关机时间窗口且启用自动关机")
+                            if self.shutdown_computer():
+                                # 关机成功，程序应该会被系统终止
+                                return
+                            else:
+                                # 关机失败，程序继续运行
+                                self.log_message.emit("⚠️ [SMB000X] 自动关机失败，程序继续运行")
+                        
+                        # 在内部循环中也检查工作时间
+                        if not self.is_in_work_time():
+                            self.log_message.emit("⏸️ 内部循环检测到已超出工作时间，退出循环")
+                            break
                             
                         # 步骤1: 刷新阶段购买
                         if not self.refresh_phase_buy():
@@ -815,6 +913,20 @@ class PurchaseRefreshBehavior(QThread):
                         self.log_message.emit(f"💸 检测到总价: {price_diff}, 单价: {unit_price:.1f} (数量: {actual_refresh_quantity}, 余额: {balance_before} → {balance_after})")
                         
                         # 步骤4: 价格合理性检查
+                        # 检查价格差为0的连续情况（可能是仓库满了）
+                        if price_diff == 0:
+                            self.zero_price_diff_count += 1
+                            self.log_message.emit(f"⚠️ 检测到价格差为0，连续次数: {self.zero_price_diff_count}/10")
+                            
+                            if self.zero_price_diff_count >= 10:
+                                self.log_message.emit("🏪 连续10次价格差为0，可能仓库已满，退出循环")
+                                break  # 退出内部循环
+                        else:
+                            # 价格差不为0，重置计数器
+                            if self.zero_price_diff_count > 0:
+                                self.log_message.emit(f"✅ 价格差恢复正常，重置连续0次计数器")
+                                self.zero_price_diff_count = 0
+                        
                         if self.is_balance_reasonable(price_diff):
                             # 只有合理的价格才记录到统计中
                             self.refresh_cost_total += price_diff
@@ -885,6 +997,19 @@ class PurchaseRefreshBehavior(QThread):
                         else:
                             # 不合理的价格差，重新获取余额 (st)
                             self.log_message.emit("🔄 价格差不合理，重新获取余额...")
+                            
+                            # 在重新获取余额前也检查时间条件
+                            if self.is_in_shutdown_window() and self.auto_shutdown:
+                                self.log_message.emit("🔌 [SMB000X] 价格重试时检测到关机时间窗口")
+                                if self.shutdown_computer():
+                                    return
+                                else:
+                                    self.log_message.emit("⚠️ [SMB000X] 自动关机失败，程序继续运行")
+                            
+                            if not self.is_in_work_time():
+                                self.log_message.emit("⏸️ 价格重试时检测到已超出工作时间，退出循环")
+                                break
+                            
                             balance_before = self.get_balance_safe()
                             if balance_before is None:
                                 self.log_message.emit("❌ 重新获取余额失败，跳过本次检测")

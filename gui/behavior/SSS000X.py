@@ -37,6 +37,27 @@ BEHAVIOR_INFO = {
             "label": "自动左键",
             "default": False,
             "description": "启用自动左键点击功能"
+        },
+        "delay_minutes": {
+            "type": "int",
+            "label": "延迟分钟",
+            "default": 0,
+            "description": "从点击开始任务后延迟多少分钟开始执行，0表示不延迟"
+        },
+        "delay_seconds": {
+            "type": "int",
+            "label": "延迟秒数",
+            "default": 0,
+            "description": "从点击开始任务后延迟多少秒开始执行，0表示不延迟"
+        },
+        "empty_ocr_delay": {
+            "type": "float",
+            "label": "空OCR延迟",
+            "default": 0.2,
+            "step": 0.1,
+            "min": 0.0,
+            "max": 2.0,
+            "description": "OCR识别结果为空时，跳到第二个位置前的延迟时间(秒)"
         }
     }
 }
@@ -71,6 +92,12 @@ class SSS000XBehavior(QThread):
         self.config = config or {}
         self.ocr_check_interval = self.config.get('ocr_check_interval', 0.5)
         self.auto_click = self.config.get('auto_click', False)
+        self.delay_minutes = self.config.get('delay_minutes', 0)
+        self.delay_seconds = self.config.get('delay_seconds', 0)
+        self.empty_ocr_delay = self.config.get('empty_ocr_delay', 0.2)
+        
+        # 记录任务开始时间（点击开始任务的时间）
+        self.task_click_time = datetime.now()
         
         # 运行状态
         self.running = False
@@ -118,6 +145,19 @@ class SSS000XBehavior(QThread):
         self.log_message.emit(f"🎯 [SSS000X] OCR识别行为初始化完成")
         self.log_message.emit(f"📋 OCR检测间隔: {self.ocr_check_interval}秒")
         self.log_message.emit(f"📋 自动左键: {'启用' if self.auto_click else '禁用'}")
+        self.log_message.emit(f"📋 空OCR延迟: {self.empty_ocr_delay}秒")
+        
+        # 显示延迟设置
+        total_delay = self.delay_minutes * 60 + self.delay_seconds
+        if total_delay > 0:
+            delay_text = []
+            if self.delay_minutes > 0:
+                delay_text.append(f"{self.delay_minutes}分钟")
+            if self.delay_seconds > 0:
+                delay_text.append(f"{self.delay_seconds}秒")
+            self.log_message.emit(f"📋 延迟设置: {' '.join(delay_text)}后开始执行")
+        else:
+            self.log_message.emit(f"📋 延迟设置: 立即开始执行")
         self.log_message.emit(f"📋 m1坐标域: ({self.coord_area1['x_min']:.4f},{self.coord_area1['y_min']:.4f}) 到 ({self.coord_area1['x_max']:.4f},{self.coord_area1['y_max']:.4f})")
         self.log_message.emit(f"📋 m2坐标域: ({self.coord_area2['x_min']:.4f},{self.coord_area2['y_min']:.4f}) 到 ({self.coord_area2['x_max']:.4f},{self.coord_area2['y_max']:.4f})")
         self.log_message.emit(f"📋 OCR识别区域: ({self.ocr_area['x_min']:.4f},{self.ocr_area['y_min']:.4f}) 到 ({self.ocr_area['x_max']:.4f},{self.ocr_area['y_max']:.4f})")
@@ -147,6 +187,73 @@ class SSS000XBehavior(QThread):
         filename = f"SSS000X_{timestamp}.csv"
         
         return os.path.join(log_dir, filename)
+    
+    def _calculate_target_time(self):
+        """计算目标执行时间（点击开始任务时间 + 延迟时间）"""
+        total_delay_seconds = self.delay_minutes * 60 + self.delay_seconds
+        
+        if total_delay_seconds <= 0:
+            return None  # 没有延迟，立即开始
+        
+        # 计算目标时间 = 点击开始任务时间 + 延迟时间
+        from datetime import timedelta
+        target_time = self.task_click_time + timedelta(seconds=total_delay_seconds)
+        
+        return target_time
+    
+    def _wait_for_delay_time(self):
+        """等待延迟时间后开始执行"""
+        target_time = self._calculate_target_time()
+        
+        if not target_time:
+            return True  # 没有延迟，立即开始
+        
+        current_time = datetime.now()
+        
+        # 显示延迟信息
+        self.log_message.emit(f"⏰ [延迟等待] 点击开始任务时间: {self.task_click_time.strftime('%H:%M:%S')}")
+        self.log_message.emit(f"⏰ [延迟等待] 目标执行时间: {target_time.strftime('%H:%M:%S')}")
+        
+        # 计算剩余等待时间
+        wait_seconds = (target_time - current_time).total_seconds()
+        
+        if wait_seconds <= 0:
+            self.log_message.emit("🎯 [延迟等待] 延迟时间已到，立即开始执行！")
+            return True
+        
+        self.log_message.emit(f"⏰ [延迟等待] 还需等待 {wait_seconds:.0f} 秒")
+        
+        # 分段等待，每秒检查一次停止信号
+        last_minute_reported = -1
+        while wait_seconds > 0 and self.running and not self.should_stop:
+            current_time = datetime.now()
+            wait_seconds = (target_time - current_time).total_seconds()
+            
+            if wait_seconds <= 0:
+                break
+            
+            if wait_seconds > 60:
+                # 如果等待时间超过1分钟，每分钟报告一次进度
+                remaining_minutes = int(wait_seconds / 60)
+                if remaining_minutes != last_minute_reported and remaining_minutes % 1 == 0:
+                    self.log_message.emit(f"⏰ [延迟等待] 还需等待 {remaining_minutes} 分钟...")
+                    last_minute_reported = remaining_minutes
+            elif wait_seconds <= 10:
+                # 最后10秒倒计时
+                self.log_message.emit(f"⏰ [倒计时] {int(wait_seconds)} 秒...")
+            
+            time.sleep(1)
+            
+            # 检查是否被暂停
+            while self.paused and self.running and not self.should_stop:
+                time.sleep(0.1)
+        
+        if not self.running or self.should_stop:
+            self.log_message.emit("🛑 [延迟等待] 在等待期间收到停止信号")
+            return False
+        
+        self.log_message.emit("🎯 [延迟等待] 延迟时间已到，开始执行脚本！")
+        return True
     
     def _generate_coordinates(self):
         """生成m1和m2的随机坐标"""
@@ -371,12 +478,64 @@ class SSS000XBehavior(QThread):
             self.m2_cycle_count += 1
             self.log_message.emit(f"⚠️ [逻辑] 识别结果为空，开始第{self.m2_cycle_count}次m2循环 (最多3次)")
             
+            # 将延迟时间分成两部分：70%用于保持当前位置点击，30%用于移动后等待
+            if self.empty_ocr_delay > 0:
+                stay_duration = self.empty_ocr_delay * 0.7  # 70%时间保持当前位置
+                move_wait_duration = self.empty_ocr_delay * 0.3  # 30%时间用于移动后等待
+                
+                self.log_message.emit(f"⏰ [逻辑] 空OCR延迟策略: 保持当前位置 {stay_duration:.2f}秒, 移动后等待 {move_wait_duration:.2f}秒")
+                
+                # 在当前位置继续点击一段时间（维持人类迹象）
+                if self.auto_click and stay_duration > 0:
+                    # 使用OCR检测间隔作为点击间隔，计算需要点击的次数
+                    click_interval = self.ocr_check_interval
+                    total_clicks = int(stay_duration / click_interval)
+                    
+                    # 计算实际执行时间和剩余等待时间
+                    actual_click_time = (total_clicks - 1) * click_interval if total_clicks > 0 else 0
+                    remaining_wait = stay_duration - actual_click_time
+                    
+                    self.log_message.emit(f"🖱️ [人类迹象] 在当前位置点击 {total_clicks} 次，间隔 {click_interval}秒")
+                    self.log_message.emit(f"⏰ [人类迹象] 预期时长 {stay_duration:.3f}秒，点击时长 {actual_click_time:.3f}秒，剩余等待 {remaining_wait:.3f}秒")
+                    
+                    for i in range(total_clicks):
+                        if not self.running or self.should_stop:
+                            self.log_message.emit(f"🛑 [人类迹象] 检测到停止信号，已点击 {i} 次")
+                            break
+                        
+                        if self.delta.click():
+                            self.log_message.emit(f"🖱️ [人类迹象] 当前位置点击 {i+1}/{total_clicks}")
+                        else:
+                            self.log_message.emit(f"❌ [人类迹象] 当前位置点击 {i+1}/{total_clicks} 失败")
+                        
+                        # 使用OCR检测间隔作为点击间隔
+                        if i < total_clicks - 1:  # 最后一次不需要等待
+                            time.sleep(click_interval)
+                    
+                    # 补充剩余的等待时间，确保总时长准确
+                    if remaining_wait > 0 and self.running and not self.should_stop:
+                        self.log_message.emit(f"⏰ [人类迹象] 补充等待 {remaining_wait:.3f}秒，确保总时长准确")
+                        time.sleep(remaining_wait)
+                    
+                    if self.running and not self.should_stop:
+                        self.log_message.emit(f"✅ [人类迹象] 当前位置操作完成，总时长 {stay_duration:.3f}秒")
+                else:
+                    # 如果未启用自动点击，则不需要维持人类迹象，只等待移动后的时间
+                    self.log_message.emit(f"⏰ [逻辑] 未启用自动点击，跳过当前位置等待，仅在移动后等待 {move_wait_duration:.2f}秒")
+            else:
+                move_wait_duration = 0
+            
             # 移动到m2坐标
             if not self._move_to_coordinate(self.m2_coord, "m2"):
                 self.log_message.emit(f"❌ [逻辑] 移动到m2坐标失败")
                 return False
             
             self.log_message.emit(f"✅ [逻辑] 已移动到m2坐标")
+            
+            # 移动后等待（使用剩余的30%时间）
+            if move_wait_duration > 0:
+                self.log_message.emit(f"⏰ [逻辑] 移动后等待 {move_wait_duration:.2f}秒...")
+                time.sleep(move_wait_duration)
             
             # 如果启用自动左键，在m2位置循环点击20次
             if self.auto_click:
@@ -428,9 +587,9 @@ class SSS000XBehavior(QThread):
                 else:
                     self.log_message.emit(f"❌ [自动左键] m2点击 {i+1}/20 失败")
                 
-                # 间隔0.05秒
+                # 使用OCR检测间隔作为点击间隔，保持一致性
                 if i < 19:  # 最后一次不需要等待
-                    time.sleep(0.05)
+                    time.sleep(self.ocr_check_interval)
             
             if self.running and not self.should_stop:
                 self.log_message.emit(f"✅ [自动左键] m2位置点击完成，共20次")
@@ -461,7 +620,11 @@ class SSS000XBehavior(QThread):
             'coord_area2': f"({self.coord_area2['x_min']:.4f},{self.coord_area2['y_min']:.4f})-({self.coord_area2['x_max']:.4f},{self.coord_area2['y_max']:.4f})",
             'm1_coord': f"({self.m1_coord[0]:.4f},{self.m1_coord[1]:.4f})" if self.m1_coord else "未生成",
             'm2_coord': f"({self.m2_coord[0]:.4f},{self.m2_coord[1]:.4f})" if self.m2_coord else "未生成",
-            'm2_cycle_count': self.m2_cycle_count
+            'm2_cycle_count': self.m2_cycle_count,
+            'delay_minutes': self.delay_minutes,
+            'delay_seconds': self.delay_seconds,
+            'empty_ocr_delay': self.empty_ocr_delay,
+            'task_click_time': self.task_click_time.strftime('%H:%M:%S')
         }
         
         return statistics
@@ -525,6 +688,15 @@ class SSS000XBehavior(QThread):
                 self.log_message.emit(f"✅ [初始化] 已移动到m1坐标")
             else:
                 self.log_message.emit(f"❌ [初始化] 移动到m1坐标失败，但继续运行")
+            
+            self.log_message.emit("=" * 60)
+            self.log_message.emit("🎯 [SSS000X] 初始化完成，准备开始脚本行为")
+            self.log_message.emit("=" * 60)
+            
+            # 等待延迟时间（如果设置了的话）
+            if not self._wait_for_delay_time():
+                self.log_message.emit("🛑 [SSS000X] 延迟等待被中断，停止执行")
+                return
             
             # 主循环
             while self.running and not self.should_stop:
