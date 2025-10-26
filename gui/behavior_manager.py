@@ -225,9 +225,9 @@ class BehaviorManager:
         
         # 遍历behavior目录中的所有.py文件
         for filename in os.listdir(self.behavior_dir):
-            # 匹配 _behavior.py 结尾的文件或者 S、D 开头的代码ID文件（如SMB000X.py、DMR000X.py、SSS000X.py、SPR000X.py等）
+            # 匹配 _behavior.py 结尾的文件或者 S、D、T 开头的代码ID文件（如SMB000X.py、DMR000X.py、SSS000X.py、SPR000X.py、TEST919G.py等）
             if ((filename.endswith('_behavior.py') or 
-                 (filename.startswith(('S', 'D')) and filename.endswith('.py'))) and 
+                 (filename.startswith(('S', 'D', 'T')) and filename.endswith('.py'))) and 
                 filename != '__init__.py'):
                 behavior_id = filename[:-3]  # 移除.py扩展名
                 
@@ -273,6 +273,13 @@ class BehaviorManager:
             return None
         
         module = self.behaviors[behavior_id]['module']
+        
+        # 优先检查模块是否有get_behavior_class函数
+        if hasattr(module, 'get_behavior_class'):
+            try:
+                return module.get_behavior_class()
+            except Exception as e:
+                print(f"调用 {behavior_id} 的 get_behavior_class 函数失败: {e}")
         
         # 查找行为类（通常以Behavior结尾）
         for attr_name in dir(module):

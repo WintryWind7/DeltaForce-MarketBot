@@ -7,3 +7,5 @@ pyautogui
 keyboard
 pywin32
 PySide6
+torch
+torchvision

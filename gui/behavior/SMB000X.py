@@ -285,7 +285,7 @@ class PurchaseRefreshBehavior(QThread):
         max_reasonable = self.target_price * 2 * actual_refresh_quantity
         
         is_reasonable = min_reasonable <= price_diff <= max_reasonable
-        self.log_message.emit(f"💡 价格合理性检查: {price_diff} (数量{actual_refresh_quantity}×合理范围: {min_reasonable}-{max_reasonable}) -> {'✅合理' if is_reasonable else '❌不合理'}")
+                        # 移除冗余的价格合理性检查日志
         
         return is_reasonable
     
@@ -433,7 +433,7 @@ class PurchaseRefreshBehavior(QThread):
                 # 更新当前余额跟踪
                 if self.balance_initialized:
                     self.current_balance = balance
-                self.log_message.emit(f"💰 当前余额: {balance}")
+                        # 移除冗余的余额日志
                 return balance
             else:
                 self.log_message.emit("⚠️ 余额获取失败")
@@ -706,7 +706,7 @@ class PurchaseRefreshBehavior(QThread):
             time.sleep(0.3)
             
             if success:
-                self.log_message.emit(f"🔄 刷新阶段购买完成 (数量: {actual_refresh_quantity})")
+                        # 移除冗余的刷新完成日志
                 return True
             else:
                 self.log_message.emit("❌ 刷新阶段购买失败")
@@ -853,7 +853,7 @@ class PurchaseRefreshBehavior(QThread):
                     # ============ 第一阶段：刷新阶段 ============
                     self.current_phase = "刷新阶段"
                     self.refresh_count += 1
-                    self.log_message.emit(f"\n🔄 第 {self.refresh_count} 次刷新阶段")
+                    # 移除冗余的刷新阶段开始日志
                     
                     # (st) 获取初始余额
                     balance_before = self.get_balance_safe()
@@ -910,7 +910,7 @@ class PurchaseRefreshBehavior(QThread):
                         price_diff = balance_before - balance_after
                         actual_refresh_quantity = max(1, self.refresh_quantity)
                         unit_price = price_diff / actual_refresh_quantity  # 计算单价
-                        self.log_message.emit(f"💸 检测到总价: {price_diff}, 单价: {unit_price:.1f} (数量: {actual_refresh_quantity}, 余额: {balance_before} → {balance_after})")
+                        # 简化日志：只记录关键信息
                         
                         # 步骤4: 价格合理性检查
                         # 检查价格差为0的连续情况（可能是仓库满了）
@@ -975,9 +975,8 @@ class PurchaseRefreshBehavior(QThread):
                                             'balance_before': purchase_balance_before,
                                             'balance_after': purchase_balance_after
                                         })
-                                        self.log_message.emit(f"💰 购买阶段花费: {purchase_cost:,} | 数量: {actual_total_quantity} | 实际单价: {actual_unit_price:.1f} (购买前: {purchase_balance_before:,} → 购买后: {purchase_balance_after:,})")
+                                        self.log_message.emit(f"💰 第{self.refresh_count}次低价购入 | 单价: {actual_unit_price:.1f} | 购买次数: {self.purchase_count}")
                                     self.write_log(self.refresh_count, balance_before, balance_after, unit_price, f"购买成功({self.purchase_quantity}x{self.click_times})")
-                                    self.log_message.emit("✅ 购买阶段完成，准备下次刷新")
                                 else:
                                     self.write_log(self.refresh_count, balance_before, balance_after, unit_price, "购买失败")
                                     self.log_message.emit("❌ 购买阶段失败")
@@ -985,7 +984,7 @@ class PurchaseRefreshBehavior(QThread):
                                 # 重置为最小值，准备下次刷新阶段
                                 self.reset_to_minimum()
                             else:
-                                self.log_message.emit(f"📊 价格过高: 单价 {unit_price:.1f} >= 目标: {self.target_price}，继续刷新")
+                                self.log_message.emit(f"🔄 第{self.refresh_count}次刷新 | 单价 {unit_price:.1f} >= 目标: {self.target_price} (数量: {actual_refresh_quantity}, 余额变动: {price_diff})")
                                 self.write_log(self.refresh_count, balance_before, balance_after, unit_price, "价格过高")
                                 
                                 # 重置为最小值（为下次刷新阶段准备）
@@ -1023,7 +1022,7 @@ class PurchaseRefreshBehavior(QThread):
                         break
                     
                     # 更新统计信息
-                    self.log_message.emit(f"📈 统计: 刷新{self.refresh_count}次, 购买{self.purchase_count}次, 发现低价{self.low_price_found_count}次")
+                    # 移除冗余的统计日志（每次循环都输出太频繁）
                     
                     # 等待下次刷新（分段检查停止标志）
                     if not self.should_stop:

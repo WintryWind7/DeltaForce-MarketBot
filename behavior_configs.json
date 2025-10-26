@@ -6,14 +6,14 @@
     "click_count": 5
   },
   "SMB000X": {
-    "target_price": 429,
+    "target_price": 540,
     "min_price_threshold": 200,
-    "refresh_delay": 3.0,
+    "refresh_delay": 0.8,
     "refresh_quantity": 31,
     "purchase_quantity": 200,
     "click_times": 6,
     "max_quantity": 200,
-    "work_start_time": "03:00",
+    "work_start_time": "00:00",
     "work_end_time": "05:15",
     "auto_shutdown": 1
   },
@@ -28,10 +28,24 @@
     "target_price": 4200,
     "min_price_threshold": 2900,
     "ammo_quantity": 2000,
-    "refresh_delay": 0.05,
-    "ocr_delay": 0.1,
+    "refresh_delay": 0.1,
+    "ocr_delay": 0.2,
     "confirm_delay": 0.15,
     "debug_mode": 0
+  },
+  "SPR919G": {
+    "target_price": 1500,
+    "min_price_threshold": 1000,
+    "ammo_quantity": 300,
+    "refresh_delay": 0.0,
+    "ocr_delay": 0.1,
+    "confirm_delay": 0.1,
+    "debug_mode": 1
+  },
+  "TEST919G": {
+    "refresh_delay": 0.1,
+    "ocr_delay": 0.5,
+    "test_rounds": 1
   },
   "template_behavior": {
     "loop_count": 10,
