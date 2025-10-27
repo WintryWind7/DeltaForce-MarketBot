@@ -91,7 +91,7 @@ class DeltaForceClass(DeltaForceRecognize):
         self.window_x = 0  # 默认X位置
         self.window_y = 0  # 默认Y位置
     
-    def get_balance(self, where="default", loop=False):
+    def get_balance(self, where="default", loop=False, return_json=False):
         """
         自动识别游戏内账户余额
         
@@ -108,10 +108,26 @@ class DeltaForceClass(DeltaForceRecognize):
                         "default" - 默认位置（原有位置）
                         "market" - 交易行位置
             loop (bool): 是否循环验证窗口聚焦直到成功，默认False
+            return_json (bool): 是否返回JSON格式的详细调试信息，默认False
             
         Returns:
-            int: 成功识别时返回账户余额数值
-            None: 识别失败时返回None，可能的失败原因包括：
+            当return_json=False时:
+                int: 成功识别时返回账户余额数值
+                None: 识别失败时返回None
+            当return_json=True时:
+                dict: 包含详细调试信息的字典，格式如下：
+                    {
+                        "success": bool,           # 识别是否成功
+                        "balance": int or None,    # 识别出的余额数值
+                        "ocr_results": list,       # OCR原始识别结果
+                        "merged_text": str,        # 合并后的文本
+                        "screenshot_base64": str,  # 截图的base64编码
+                        "region_coords": dict,     # 识别区域坐标
+                        "timestamp": str,          # 识别时间戳
+                        "where": str              # 识别位置类型
+                    }
+            
+        可能的失败原因包括：
                  - 游戏界面未正确显示
                  - OCR识别失败
                  - 截图区域无有效数字内容
@@ -129,8 +145,8 @@ class DeltaForceClass(DeltaForceRecognize):
             # 交易行位置配置
             m3_ratio = (0.8665, 0.0845)  # 交易行余额点击位置
             # 交易行的识别区域需要相应偏移，保持y轴不变，x轴偏移，手动偏移
-            m4_ratio = (0.7855, 0.2777)  # 余额显示区域左上角（加上偏移）
-            m5_ratio = (0.8866, 0.2914)  # 余额显示区域右下角（加上偏移）
+            m4_ratio = (0.7855, 0.2750)  # 余额显示区域左上角（加上偏移）
+            m5_ratio = (0.9066, 0.2914)  # 余额显示区域右下角（加上偏移）
             print(f"🎯 交易行位置配置: 点击({m3_ratio[0]:.4f}, {m3_ratio[1]:.4f}), 识别区域({m4_ratio[0]:.4f}, {m4_ratio[1]:.4f}) 到 ({m5_ratio[0]:.4f}, {m5_ratio[1]:.4f})")
         else:  # where == "default" 或其他值
             # 默认位置配置
@@ -179,6 +195,26 @@ class DeltaForceClass(DeltaForceRecognize):
                 decoder='beamsearch'    # 使用束搜索解码器提高识别准确性
             )
             
+            # 准备JSON返回数据（如果需要）
+            if return_json:
+                import base64
+                from io import BytesIO
+                from datetime import datetime
+                
+                # 将截图转换为base64编码
+                buffer = BytesIO()
+                screenshot.save(buffer, format='PNG')
+                screenshot_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                
+                # 准备OCR结果数据
+                ocr_results_data = []
+                for bbox, text, confidence in results:
+                    ocr_results_data.append({
+                        "bbox": bbox.tolist() if hasattr(bbox, 'tolist') else bbox,
+                        "text": text,
+                        "confidence": float(confidence)
+                    })
+            
             # 步骤6: 处理OCR识别结果并提取余额数值
             if results:
                 # 记录详细的OCR调试信息
@@ -199,18 +235,105 @@ class DeltaForceClass(DeltaForceRecognize):
                 if combined_text:
                     balance = int(combined_text)
                     print(f"✅ 成功识别账户余额: {balance}")
-                    return balance
+                    
+                    # 返回JSON格式或普通格式
+                    if return_json:
+                        return {
+                            "success": True,
+                            "balance": balance,
+                            "ocr_results": ocr_results_data,
+                            "merged_text": combined_text,
+                            "screenshot_base64": screenshot_base64,
+                            "region_coords": {
+                                "left": left,
+                                "top": top,
+                                "right": right,
+                                "bottom": bottom,
+                                "m4_ratio": m4_ratio,
+                                "m5_ratio": m5_ratio
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "where": where
+                        }
+                    else:
+                        return balance
                 else:
                     print("❌ 余额识别失败：OCR结果中未找到有效数字")
-                    return None
+                    
+                    if return_json:
+                        return {
+                            "success": False,
+                            "balance": None,
+                            "ocr_results": ocr_results_data,
+                            "merged_text": combined_text,
+                            "screenshot_base64": screenshot_base64,
+                            "region_coords": {
+                                "left": left,
+                                "top": top,
+                                "right": right,
+                                "bottom": bottom,
+                                "m4_ratio": m4_ratio,
+                                "m5_ratio": m5_ratio
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "where": where,
+                            "error": "OCR结果中未找到有效数字"
+                        }
+                    else:
+                        return None
             else:
                 print("❌ 余额识别失败：OCR未返回任何识别结果")
-                return None
+                
+                if return_json:
+                    import base64
+                    from io import BytesIO
+                    from datetime import datetime
+                    
+                    # 将截图转换为base64编码
+                    buffer = BytesIO()
+                    screenshot.save(buffer, format='PNG')
+                    screenshot_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                    
+                    return {
+                        "success": False,
+                        "balance": None,
+                        "ocr_results": [],
+                        "merged_text": "",
+                        "screenshot_base64": screenshot_base64,
+                        "region_coords": {
+                            "left": left,
+                            "top": top,
+                            "right": right,
+                            "bottom": bottom,
+                            "m4_ratio": m4_ratio,
+                            "m5_ratio": m5_ratio
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                        "where": where,
+                        "error": "OCR未返回任何识别结果"
+                    }
+                else:
+                    return None
                 
         except Exception as e:
             # 捕获并处理所有可能的异常情况
             print(f"余额识别过程中发生错误: {e}")
-            return None
+            
+            if return_json:
+                from datetime import datetime
+                return {
+                    "success": False,
+                    "balance": None,
+                    "ocr_results": [],
+                    "merged_text": "",
+                    "screenshot_base64": "",
+                    "region_coords": {},
+                    "timestamp": datetime.now().isoformat(),
+                    "where": where,
+                    "error": str(e)
+                }
+            else:
+                return None
 
     def get_bar_price(self):
         """
@@ -942,48 +1065,32 @@ class DeltaForceClass(DeltaForceRecognize):
         
         # 静默验证，不输出日志
         
-        retry_count = 0
-        max_retries = 1 if not loop else float('inf')  # 非循环模式只尝试1次
-        
-        while retry_count < max_retries:
-            retry_count += 1
+        if not loop:
+            # 非循环模式：只尝试1次
+            retry_count = 0
+            max_retries = 1
             
-            if loop and retry_count > 1:
-                print(f"🔄 [窗口验证] 第 {retry_count} 次重试...")
-            
-            # 1. 尝试聚焦到目标窗口
-            focus_success = self.focus_window()
-            if not focus_success:
-                if loop:
-                    print(f"⚠️ [窗口验证] 第 {retry_count} 次聚焦操作失败，等待后重试...")
-                    time.sleep(0.5)  # 等待0.5秒后重试
-                    continue
-                else:
+            while retry_count < max_retries:
+                retry_count += 1
+                
+                # 1. 尝试聚焦到目标窗口
+                focus_success = self.focus_window()
+                if not focus_success:
                     print(f"❌ [窗口验证] 聚焦操作失败")
                     return False
-            
-            # 2. 短暂等待聚焦生效
-            time.sleep(0.01)
-            
-            # 3. 检测当前前台窗口
-            current_foreground = self.get_foreground_window_handle()
-            if current_foreground is None:
-                if loop:
-                    print(f"⚠️ [窗口验证] 第 {retry_count} 次无法获取前台窗口句柄，等待后重试...")
-                    time.sleep(0.5)
-                    continue
-                else:
+                
+                # 2. 短暂等待聚焦生效
+                time.sleep(0.01)
+                
+                # 3. 检测当前前台窗口
+                current_foreground = self.get_foreground_window_handle()
+                if current_foreground is None:
                     print(f"❌ [窗口验证] 无法获取当前前台窗口句柄")
                     return False
-            
-            # 4. 验证是否为目标窗口
-            if current_foreground == self.target_window_handle:
-                return True
-            else:
-                if loop:
-                    print(f"⚠️ [窗口验证] 第 {retry_count} 次验证失败 - 目标: {self.target_window_handle}, 实际: {current_foreground}")
-                    time.sleep(0.5)  # 等待0.5秒后重试
-                    continue
+                
+                # 4. 验证是否为目标窗口
+                if current_foreground == self.target_window_handle:
+                    return True
                 else:
                     error_msg = f"❌ [窗口验证] 窗口聚焦验证失败! 目标窗口: {self.target_window_handle}, 实际前台: {current_foreground}"
                     print(error_msg)
@@ -994,6 +1101,113 @@ class DeltaForceClass(DeltaForceRecognize):
                         self.log_callback(error_msg)
                     
                     return False
+        else:
+            # 循环模式：先尝试正常验证，失败时进入缓冲循环
+            retry_count = 0
+            max_normal_retries = 50  # 正常重试次数
+            
+            # 第一阶段：正常循环重试
+            while retry_count < max_normal_retries:
+                retry_count += 1
+                
+                if retry_count > 1:
+                    print(f"🔄 [窗口验证] 第 {retry_count} 次重试...")
+                
+                # 1. 尝试聚焦到目标窗口
+                focus_success = self.focus_window()
+                if not focus_success:
+                    print(f"⚠️ [窗口验证] 第 {retry_count} 次聚焦操作失败，等待后重试...")
+                    time.sleep(0.5)
+                    continue
+                
+                # 2. 短暂等待聚焦生效
+                time.sleep(0.01)
+                
+                # 3. 检测当前前台窗口
+                current_foreground = self.get_foreground_window_handle()
+                if current_foreground is None:
+                    print(f"⚠️ [窗口验证] 第 {retry_count} 次无法获取前台窗口句柄，等待后重试...")
+                    time.sleep(0.5)
+                    continue
+                
+                # 4. 验证是否为目标窗口
+                if current_foreground == self.target_window_handle:
+                    return True  # 验证成功，正常返回True
+                else:
+                    print(f"⚠️ [窗口验证] 第 {retry_count} 次验证失败 - 目标: {self.target_window_handle}, 实际: {current_foreground}")
+                    time.sleep(0.5)
+            
+            # 第二阶段：正常重试失败，进入缓冲循环模式
+            print(f"⚠️ [窗口验证] 正常重试 {max_normal_retries} 次失败，进入缓冲循环模式")
+            
+            buffer_cycles = 5  # 缓冲循环次数
+            verifications_per_cycle = 10  # 每个缓冲循环的验证次数
+            
+            print(f"🔄 [窗口验证] 进入缓冲模式，将执行 {buffer_cycles} 个缓冲循环以防止程序出错")
+            print(f"⚠️ [窗口验证] 注意：由于时效性问题，缓冲模式最终将返回失败")
+            
+            for buffer_cycle in range(buffer_cycles):
+                print(f"🔄 [窗口验证] 开始第 {buffer_cycle + 1}/{buffer_cycles} 个缓冲循环")
+                
+                # 每个缓冲循环内进行10次验证
+                for verification in range(verifications_per_cycle):
+                    # 1. 尝试聚焦到目标窗口
+                    focus_success = self.focus_window()
+                    if not focus_success:
+                        print(f"⚠️ [窗口验证] 缓冲循环 {buffer_cycle + 1} - 第 {verification + 1} 次聚焦操作失败")
+                        time.sleep(0.5)
+                        continue
+                    
+                    # 2. 短暂等待聚焦生效
+                    time.sleep(0.01)
+                    
+                    # 3. 检测当前前台窗口
+                    current_foreground = self.get_foreground_window_handle()
+                    if current_foreground is None:
+                        print(f"⚠️ [窗口验证] 缓冲循环 {buffer_cycle + 1} - 第 {verification + 1} 次无法获取前台窗口句柄")
+                        time.sleep(0.5)
+                        continue
+                    
+                    # 4. 验证是否为目标窗口
+                    if current_foreground == self.target_window_handle:
+                        print(f"✅ [窗口验证] 缓冲循环 {buffer_cycle + 1} - 第 {verification + 1} 次验证成功，但由于时效性问题返回失败")
+                        # 注意：缓冲模式下即使验证成功也返回False（时效性问题）
+                        break  # 跳出内层验证循环
+                    else:
+                        print(f"⚠️ [窗口验证] 缓冲循环 {buffer_cycle + 1} - 第 {verification + 1} 次验证失败 - 目标: {self.target_window_handle}, 实际: {current_foreground}")
+                        time.sleep(0.5)
+                
+                # 如果当前缓冲循环的10次验证都失败了
+                if buffer_cycle < buffer_cycles - 1:  # 不是最后一个缓冲循环
+                    print(f"🔄 [窗口验证] 缓冲循环 {buffer_cycle + 1} 的10次验证完成，执行Alt+Tab窗口切换")
+                    
+                    # 执行3次Alt+Tab操作
+                    try:
+                        import pyautogui
+                        for alt_tab_count in range(3):
+                            print(f"⌨️ [窗口验证] 执行第 {alt_tab_count + 1}/3 次 Alt+Tab 操作")
+                            pyautogui.hotkey('alt', 'tab')
+                            time.sleep(0.5)  # 每次Alt+Tab之间等待0.5秒
+                        
+                        print(f"✅ [窗口验证] Alt+Tab操作完成，准备进入下个缓冲循环")
+                        time.sleep(1.0)  # Alt+Tab操作后等待1秒
+                        
+                    except Exception as e:
+                        print(f"❌ [窗口验证] Alt+Tab操作失败: {e}")
+                else:
+                    # 最后一个缓冲循环完成
+                    print(f"🔄 [窗口验证] 所有 {buffer_cycles} 个缓冲循环已完成")
+            
+            # 缓冲循环完成，返回False
+            error_msg = f"❌ [窗口验证] 缓冲模式完成，窗口验证最终失败 (目标窗口: {self.target_window_handle})"
+            print(error_msg)
+            print(f"   说明: 经过正常重试和缓冲循环，仍无法验证窗口聚焦")
+            
+            # 如果设置了日志回调，将失败信息发送到GUI
+            if self.log_callback:
+                self.log_callback(error_msg)
+            
+            return False
         
         # 这里不应该到达，但为了安全起见
         return False

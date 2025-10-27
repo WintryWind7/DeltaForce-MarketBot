@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QScrollArea, QFormLayout, QLineEdit
 )
 from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QIcon, QFont, QAction, QColor
+from PySide6.QtGui import QIcon, QFont, QAction, QColor, QWheelEvent
 
 import sys
 import os
@@ -246,9 +246,36 @@ class MainWindow(QMainWindow):
         title.setFont(QFont("", 18, QFont.Bold))
         layout.addWidget(title)
         
+        # 创建自定义滚动区域
+        scroll_area = self.create_smooth_scroll_area()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                background-color: #f0f0f0;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #c0c0c0;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #a0a0a0;
+            }
+        """)
+        
         # 行为列表容器
         actions_container = QWidget()
         actions_layout = QVBoxLayout(actions_container)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
         
         # 从行为管理器获取行为列表
         behavior_list = self.behavior_manager.get_behavior_list()
@@ -270,6 +297,9 @@ class MainWindow(QMainWindow):
                     "DMR000X": "🎯",  # 双端刷新购买
                     "SMB000X": "💰",  # 单端购买刷新
                     "SSS000X": "🎯",  # 单端枪皮
+                    "SPR000X": "💎",  # 单端价格刷新
+                    "SPR919G": "💎",  # 单端价格刷新919G
+                    "DMB000X": "🔄",  # 双端满仓
                     "test_basic_behavior": "🔧",
                     "custom_behavior": "📝"
                 }
@@ -287,8 +317,14 @@ class MainWindow(QMainWindow):
                 action_card = self.create_action_card(action_data)
                 actions_layout.addWidget(action_card)
         
-        layout.addWidget(actions_container)
-        layout.addStretch()
+        # 添加弹性空间到容器底部
+        actions_layout.addStretch()
+        
+        # 将容器设置到滚动区域
+        scroll_area.setWidget(actions_container)
+        
+        # 将滚动区域添加到主布局
+        layout.addWidget(scroll_area)
         
         self.action_stacked.addWidget(selection_page)
         
@@ -296,6 +332,9 @@ class MainWindow(QMainWindow):
         """创建行为卡片"""
         card = QFrame()
         card.setFrameStyle(QFrame.Box)
+        # 设置固定高度，防止被压缩
+        card.setFixedHeight(120)
+        card.setMinimumWidth(500)
         card.setStyleSheet("""
             QFrame {
                 border: 2px solid #ddd;
@@ -317,10 +356,10 @@ class MainWindow(QMainWindow):
         
         # 左侧图标
         icon_label = QLabel(action["icon"])
-        icon_label.setFont(QFont("", 20))
-        icon_label.setFixedSize(50, 50)
+        icon_label.setFont(QFont("", 28))
+        icon_label.setFixedSize(70, 70)
         icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setStyleSheet("border: none; background-color: #ecf0f1; border-radius: 25px;")
+        icon_label.setStyleSheet("border: none; background-color: #ecf0f1; border-radius: 35px;")
         layout.addWidget(icon_label)
         
         # 右侧信息
@@ -334,7 +373,7 @@ class MainWindow(QMainWindow):
         title_row_layout.setSpacing(8)
         
         name_label = QLabel(action["name"])
-        name_label.setFont(QFont("Microsoft YaHei", 12, QFont.Bold))
+        name_label.setFont(QFont("Microsoft YaHei", 16, QFont.Bold))
         title_row_layout.addWidget(name_label)
         
         # 添加标签
@@ -345,15 +384,15 @@ class MainWindow(QMainWindow):
                     QLabel {
                         background-color: #3498db;
                         color: white;
-                        border-radius: 8px;
-                        padding: 4px 8px;
-                        font-size: 12px;
+                        border-radius: 10px;
+                        padding: 6px 12px;
+                        font-size: 14px;
                         font-weight: bold;
                         margin: 0px 4px;
                     }
                 """)
-                tag_label.setFont(QFont("Microsoft YaHei", 12, QFont.Bold))
-                tag_label.setFixedHeight(24)
+                tag_label.setFont(QFont("Microsoft YaHei", 14, QFont.Bold))
+                tag_label.setFixedHeight(32)
                 tag_label.setAlignment(Qt.AlignCenter)
                 title_row_layout.addWidget(tag_label)
         
@@ -361,8 +400,9 @@ class MainWindow(QMainWindow):
         info_layout.addLayout(title_row_layout)
         
         desc_label = QLabel(action["description"])
-        desc_label.setStyleSheet("color: #666; font-size: 10px;")
+        desc_label.setStyleSheet("color: #666; font-size: 14px;")
         desc_label.setWordWrap(True)
+        desc_label.setFont(QFont("Microsoft YaHei", 14))
         info_layout.addWidget(desc_label)
         
         layout.addLayout(info_layout)
@@ -1675,3 +1715,31 @@ class MainWindow(QMainWindow):
             "一个用于DeltaForce游戏的自动化交易工具\n\n"
             "© 2025 WintryWind"
         )
+    
+    def create_smooth_scroll_area(self):
+        """创建支持平滑滚动的滚动区域"""
+        class SmoothScrollArea(QScrollArea):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setFocusPolicy(Qt.WheelFocus)
+            
+            def wheelEvent(self, event: QWheelEvent):
+                """处理滚轮事件，实现平滑滚动"""
+                # 获取滚动条
+                scrollbar = self.verticalScrollBar()
+                
+                # 计算滚动步长（每次滚动2个行为卡片的高度）
+                scroll_step = 2 * 128  # 120px卡片高度 + 8px间距
+                
+                # 根据滚轮方向滚动
+                if event.angleDelta().y() > 0:
+                    # 向上滚动
+                    new_value = max(0, scrollbar.value() - scroll_step)
+                else:
+                    # 向下滚动
+                    new_value = min(scrollbar.maximum(), scrollbar.value() + scroll_step)
+                
+                scrollbar.setValue(new_value)
+                event.accept()
+        
+        return SmoothScrollArea()
