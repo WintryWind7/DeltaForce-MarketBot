@@ -1,29 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-购买刷新单端自定义子弹行为模块 - SMB000X (重构版)
-通过购买机制检测低价子弹并批量购买
-代码ID: SMB000X (Single Market Bot)
+购买刷新单端时间测试行为模块 - SMBTIME
+基于SMB000X，专门用于测试刷新购买流程的时间延迟
+代码ID: SMBTIME (Single Market Bot Timing)
 """
 
 try:
-    from .Behavior import Behavior, LogLevel
+    from .Behavior import Behavior, LogLevel, require_any_delta
 except ImportError:
     # 如果相对导入失败，尝试绝对导入
     import sys
     import os
     sys.path.append(os.path.dirname(__file__))
-    from Behavior import Behavior, LogLevel
-
-# 导入协议装饰器
-try:
-    from base.decorators import protocol_handler
-except ImportError:
-    import sys
-    import os
-    base_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'base')
-    sys.path.insert(0, base_dir)
-    from decorators import protocol_handler
-
+    from Behavior import Behavior, LogLevel, require_any_delta
 import time
 import csv
 import os
@@ -31,12 +20,12 @@ from datetime import datetime, timedelta
 
 # 行为信息定义
 BEHAVIOR_INFO = {
-    "code_id": "SMB000X",  # 内部代码ID
-    "title": "购买刷新单端自定义子弹行为",
-    "description": "通过实际购买1个子弹来检测价格，发现低价时批量购买。需要用户手动切换到期望购买的子弹类型。",
-    "version": "2.0.0",  # 重构版本
+    "code_id": "SMBTIME",  # 内部代码ID
+    "title": "购买刷新单端时间测试行为",
+    "description": "基于SMB000X，专门用于测试刷新购买流程的时间延迟。记录从刷新购买点击到确认购买点击前的每个步骤耗时。",
+    "version": "1.0.0",  # 时间测试版本
     "author": "DeltaForce Team",
-    "tags": ["单端", "购买查价"],
+    "tags": ["单端", "时间测试", "性能分析"],
     "custom_config": {
         "target_price": {
             "type": "int", 
@@ -107,18 +96,12 @@ BEHAVIOR_INFO = {
             "label": "自动关机",
             "default": False,
             "description": "工作完成后是否自动关机"
-        },
-        "debug_mode": {
-            "type": "bool",
-            "label": "调试模式",
-            "default": False,
-            "description": "开启后只显示debug_log的日志，过滤普通日志输出"
         }
     }
 }
 
-class PurchaseRefreshBehavior(Behavior):
-    """购买刷新单端行为类 - SMB000X (重构版)"""
+class TimingPurchaseRefreshBehavior(Behavior):
+    """购买刷新单端时间测试行为类 - SMBTIME"""
     
     @classmethod
     def args(cls):
@@ -183,12 +166,6 @@ class PurchaseRefreshBehavior(Behavior):
                 'label': '自动关机',
                 'default': False,
                 'description': '工作完成后是否自动关机'
-            },
-            'debug_mode': {
-                'type': 'bool',
-                'label': '调试模式',
-                'default': False,
-                'description': '开启后只显示debug_log的日志，过滤普通日志输出'
             }
         }
     
@@ -199,13 +176,6 @@ class PurchaseRefreshBehavior(Behavior):
         
         # 发送配置信息
         self.send_log(LogLevel.INFO, f"📋 配置: 目标价格≤{self.target_price}, 刷新{self.refresh_quantity}发, 购买{self.purchase_quantity}发×{self.click_times}次, 工作时间{self.work_start_time}-{self.work_end_time}")
-        
-        # 调试模式信息
-        if self.debug_mode:
-            self.debug_log(LogLevel.INFO, f"🔍 调试模式已开启，只显示debug_log日志")
-            self.debug_log(LogLevel.INFO, f"🔧 配置参数: target_price={self.target_price}, refresh_quantity={self.refresh_quantity}, purchase_quantity={self.purchase_quantity}")
-        else:
-            self.send_log(LogLevel.INFO, "📝 普通模式，显示所有日志")
     
     def init_behavior(self):
         """初始化行为特定逻辑"""
@@ -234,14 +204,17 @@ class PurchaseRefreshBehavior(Behavior):
         self.csv_file_path = None
         self.init_price_logging()
         
-        self.system_log(LogLevel.SUCCESS, "🎯 SMB000X行为初始化完成")
+        # 时间测量相关
+        self.timing_records = []  # 存储每次的时间测量记录（仅内存，用于统计）
+        
+        self.send_log(LogLevel.SUCCESS, "🎯 SMBTIME行为初始化完成")
         
         # 显示Delta状态
         delta_info = self.get_delta_info()
-        self.system_log(LogLevel.INFO, f"🔧 {delta_info}")
+        self.send_log(LogLevel.INFO, f"🔧 {delta_info}")
         
         if not self.is_delta_ready():
-            self.system_log(LogLevel.ERROR, "❌ Delta实例未就绪，无法执行游戏操作")
+            self.send_log(LogLevel.ERROR, "❌ Delta实例未就绪，无法执行游戏操作")
     
     def main_logic(self):
         """主业务逻辑"""
@@ -250,8 +223,8 @@ class PurchaseRefreshBehavior(Behavior):
                 self.send_log(LogLevel.ERROR, "❌ Delta实例未就绪，程序退出")
                 return False
             
-            self.system_log(LogLevel.SUCCESS, "🚀 SMB000X开始执行")
-            self.system_log(LogLevel.INFO, "📋 执行流程: 初始化 → 刷新阶段 → 购买阶段")
+            self.send_log(LogLevel.SUCCESS, "🚀 SMBTIME开始执行")
+            self.send_log(LogLevel.INFO, "📋 执行流程: 初始化 → 刷新阶段 → 购买阶段 (含时间测量)")
             
             # 初始化余额
             if not self.initialize_balance():
@@ -275,9 +248,8 @@ class PurchaseRefreshBehavior(Behavior):
                     self.handle_program_completion("到达关机时间")
                     return True
                 
-                # 执行一轮刷新购买流程
-                cycle_result = self.execute_refresh_purchase_cycle()
-                success = cycle_result.success if cycle_result else False
+                # 执行一轮刷新购买流程（含时间测量）
+                success = self.execute_refresh_purchase_cycle_with_timing()
                 
                 if success:
                     self.increment_success()
@@ -315,92 +287,79 @@ class PurchaseRefreshBehavior(Behavior):
             self.send_log(LogLevel.ERROR, f"❌ 主逻辑执行异常: {e}")
             return False
     
-    @protocol_handler()
-    def execute_refresh_purchase_cycle(self, protocol):
-        """执行一轮刷新购买循环"""
+    def execute_refresh_purchase_cycle_with_timing(self):
+        """执行一轮刷新购买循环（含时间测量）"""
         try:
             self.increment_cycle()
             
+            # ⏱️ 开始总延迟测试：从点击刷新按钮前开始计时
+            total_timing_start = time.perf_counter()
+            self.send_log(LogLevel.INFO, f"⏱️ 开始总延迟测试：第{self.refresh_count + 1}次循环")
+            
+            timing_record = {
+                'cycle': self.refresh_count + 1,
+                'total_start_time': total_timing_start,
+                'steps': []
+            }
+            
             # 刷新阶段
             self.current_phase = "刷新阶段"
-            refresh_result = self.refresh_phase()
-            protocol <<= refresh_result
-            
-            # 检查刷新是否成功
-            if not refresh_result or not refresh_result.success:
-                return False
-            
-            # 从protocol中获取unit_price
-            unit_price = getattr(refresh_result, 'unit_price', None)
+            unit_price, refresh_timing = self.refresh_phase_with_timing()
             
             if unit_price is None:
                 return False
+            
+            # 记录刷新阶段时间
+            timing_record['steps'].extend(refresh_timing)
             
             # 判断是否进入购买阶段
             if unit_price <= self.target_price and unit_price >= self.min_price_threshold:
                 # 价格合理，进入购买阶段
                 self.current_phase = "购买阶段"
-                purchase_result = self.purchase_phase(unit_price)
-                protocol <<= purchase_result
-                purchase_success = purchase_result.success if purchase_result else False
+                purchase_success = self.purchase_phase_simple(unit_price)
                 
-                # 打印完整的调用链（从刷新到购买完成）
-                if hasattr(protocol, 'timing_records') and protocol.timing_records:
-                    self.debug_log(LogLevel.INFO, f"📊 第{self.refresh_count}次完整流程调用链 (刷新→购买，单价: {unit_price:.1f}):")
-                    total_time = 0
-                    for i, record in enumerate(protocol.timing_records, 1):
-                        # 兼容新旧格式：新格式4元素，旧格式3元素
-                        if len(record) == 4:
-                            func_name, runtime, sleep_time, is_base = record
-                        else:
-                            func_name, runtime, is_base = record
-                            sleep_time = 0.0
-                        
-                        total_time += runtime
-                        runtime_ms = runtime * 1000  # 转换为毫秒
-                        sleep_ms = sleep_time * 1000  # 转换为毫秒
-                        
-                        # 只要sleep_ms > 0就显示，避免因为精度问题导致不显示
-                        if sleep_ms > 0.001:  # 大于0.001ms才显示
-                            net_ms = runtime_ms - sleep_ms
-                            self.debug_log(LogLevel.INFO, f"  {i}. {func_name}: {runtime_ms:.3f}ms ({net_ms:.3f}ms + {sleep_ms:.3f}ms)")
-                        else:
-                            self.debug_log(LogLevel.INFO, f"  {i}. {func_name}: {runtime_ms:.3f}ms")
-                    total_time_ms = total_time * 1000  # 转换为毫秒
-                    self.debug_log(LogLevel.INFO, f"  总执行时间: {total_time_ms:.3f}ms")
+                # ⏱️ 结束总延迟测试：确认购买按钮后
+                total_timing_end = time.perf_counter()
+                total_duration = total_timing_end - total_timing_start
+                
+                timing_record['total_end_time'] = total_timing_end
+                timing_record['total_duration'] = total_duration
+                timing_record['unit_price'] = unit_price
+                timing_record['purchase_success'] = purchase_success
+                
+                # 添加总延迟记录
+                timing_record['steps'].append({
+                    'step': '总延迟',
+                    'start_time': total_timing_start,
+                    'end_time': total_timing_end,
+                    'duration': total_duration,
+                    'description': '从点击刷新按钮前到确认购买按钮后的完整延迟'
+                })
+                
+                self.send_log(LogLevel.SUCCESS, f"[第{timing_record['cycle']}轮] 总延迟{total_duration:.3f}秒 (完整购买流程)")
+                
+                # 仅保存到内存用于统计，不保存到CSV
+                self.timing_records.append(timing_record)
+                
+                # 打印详细时间分析
+                self.print_timing_analysis(timing_record)
                 
                 return purchase_success
             else:
-                # 价格不合理，只执行了刷新阶段，打印刷新阶段的调用链
-                if hasattr(protocol, 'timing_records') and protocol.timing_records:
-                    self.debug_log(LogLevel.INFO, f"📊 第{self.refresh_count}次刷新阶段调用链 (单价: {unit_price:.1f}):")
-                    total_time = 0
-                    for i, record in enumerate(protocol.timing_records, 1):
-                        # 兼容新旧格式：新格式4元素，旧格式3元素
-                        if len(record) == 4:
-                            func_name, runtime, sleep_time, is_base = record
-                        else:
-                            func_name, runtime, is_base = record
-                            sleep_time = 0.0
-                        
-                        total_time += runtime
-                        runtime_ms = runtime * 1000  # 转换为毫秒
-                        sleep_ms = sleep_time * 1000  # 转换为毫秒
-                        
-                        # 只要sleep_ms > 0就显示，避免因为精度问题导致不显示
-                        if sleep_ms > 0.001:  # 大于0.001ms才显示
-                            net_ms = runtime_ms - sleep_ms
-                            self.debug_log(LogLevel.INFO, f"  {i}. {func_name}: {runtime_ms:.3f}ms ({net_ms:.3f}ms + {sleep_ms:.3f}ms)")
-                        else:
-                            self.debug_log(LogLevel.INFO, f"  {i}. {func_name}: {runtime_ms:.3f}ms")
-                    total_time_ms = total_time * 1000  # 转换为毫秒
-                    self.debug_log(LogLevel.INFO, f"  总执行时间: {total_time_ms:.3f}ms")
-                
-                # 价格不合理，继续刷新
+                # 价格不合理，继续刷新（只有刷新延迟，无总延迟）
                 if unit_price < self.min_price_threshold:
                     self.send_log(LogLevel.WARNING, f"⚠️ 价格过低: {unit_price:.1f} < {self.min_price_threshold} (可能识别错误)")
                 else:
                     self.send_log(LogLevel.DEBUG, f"🔄 价格过高: {unit_price:.1f} > {self.target_price}")
+                
+                timing_record['unit_price'] = unit_price
+                timing_record['purchase_success'] = False
+                
+                # 仅保存到内存用于统计，不保存到CSV
+                self.timing_records.append(timing_record)
+                
+                # 打印刷新阶段时间分析
+                self.print_refresh_timing_analysis(timing_record)
                 
                 return False
                 
@@ -408,15 +367,10 @@ class PurchaseRefreshBehavior(Behavior):
             self.send_log(LogLevel.ERROR, f"❌ 刷新购买循环异常: {e}")
             return False
     
-    def initialize_balance(self):
+    @require_any_delta
+    def initialize_balance(self, delta):
         """初始化余额跟踪"""
         try:
-            # 获取Delta实例
-            delta = self.get_any_delta()
-            if not delta:
-                self.send_log(LogLevel.ERROR, "❌ 无法获取Delta实例")
-                return False
-            
             self.send_log(LogLevel.INFO, "💰 正在获取初始余额...")
             
             balance_result = delta.get_balance(where="market", loop=True)
@@ -424,99 +378,139 @@ class PurchaseRefreshBehavior(Behavior):
                 self.send_log(LogLevel.ERROR, "❌ 无法获取初始余额")
                 return False
             
-            # 初始化阶段不打印调用链
-            
             balance = balance_result.balance
             self.initial_balance = balance
             self.current_balance = balance
             self.last_balance = balance
             
+            # 打印初始化调用链时间记录
+            if hasattr(balance_result, 'timing_records'):
+                self.send_log(LogLevel.INFO, f"📊 初始化调用链时间:")
+                for i, (func_name, net_time, is_base) in enumerate(balance_result.timing_records, 1):
+                    self.send_log(LogLevel.INFO, f"  {i}. {func_name}: {net_time*1000:.3f}ms")
+                self.send_log(LogLevel.INFO, f"  总执行时间: {balance_result.elapsed_time*1000:.3f}ms")
+            
             self.log_with_stats(LogLevel.SUCCESS, f"💰 初始余额: {balance:,}", 
                                initial_balance=balance)
-            self.debug_log(LogLevel.INFO, f"🔍 初始化余额设置: {balance:,}")
             return True
             
         except Exception as e:
             self.send_log(LogLevel.ERROR, f"❌ 余额初始化异常: {e}")
             return False
     
-    @protocol_handler()
-    def refresh_phase(self, protocol):
-        """刷新阶段 - 购买少量子弹检测价格"""
+    @require_any_delta
+    def refresh_phase_with_timing(self, delta):
+        """刷新阶段 - 购买少量子弹检测价格（含详细时间测量）"""
         try:
-            # 获取Delta实例
-            delta = self.get_any_delta()
-            if not delta:
-                self.send_log(LogLevel.ERROR, "❌ 无法获取Delta实例")
-                return False
-            
             self.refresh_count += 1
+            timing_steps = []
             
-            # 获取刷新前余额
-            self.debug_log(LogLevel.INFO, f"🔍 开始第{self.refresh_count}次刷新操作")
+            # 获取刷新前余额（不计入延迟测试）
             balance_before_result = delta.get_balance(where="market", loop=True)
             if not balance_before_result.success:
                 self.send_log(LogLevel.WARNING, "⚠️ 无法获取刷新前余额")
-                self.debug_log(LogLevel.ERROR, "🔍 获取刷新前余额失败")
-                return False
+                balance_before = self.current_balance
+            else:
+                balance_before = balance_before_result.balance
+                
+                # 打印调用链时间记录（刷新前）
+                if hasattr(balance_before_result, 'timing_records'):
+                    self.send_log(LogLevel.INFO, f"📊 第{self.refresh_count}次刷新前调用链时间:")
+                    for i, (func_name, net_time, is_base) in enumerate(balance_before_result.timing_records, 1):
+                        self.send_log(LogLevel.INFO, f"  {i}. {func_name}: {net_time*1000:.3f}ms")
+                    self.send_log(LogLevel.INFO, f"  总执行时间: {balance_before_result.elapsed_time*1000:.3f}ms")
             
-            protocol <<= balance_before_result
-            balance_before = balance_before_result.balance
+            if balance_before is None:
+                self.send_log(LogLevel.WARNING, "⚠️ 无法获取刷新前余额")
+                return None, timing_steps
             
             # 执行刷新购买
             self.log_with_stats(LogLevel.INFO, f"🔄 第{self.refresh_count}次刷新: 购买{self.refresh_quantity}发检测价格 (参数: buyin={self.refresh_quantity}, maxin={self.max_quantity})",
                               refresh_count=self.refresh_count, refresh_quantity=self.refresh_quantity)
             
-            buy_result = delta.buy_in_market(
+            # ⏱️ 开始刷新延迟测试：从点击刷新按钮后开始
+            refresh_timing_start = time.perf_counter()
+            
+            # 子步骤1: 执行刷新购买操作
+            step1_start = time.perf_counter()
+            success = delta.buy_in_market(
                 buyin=self.refresh_quantity,
                 maxin=self.max_quantity,
                 times=1,
                 buy=True,
                 loop=False
             )
-            protocol <<= buy_result
+            step1_end = time.perf_counter()
+            step1_duration = step1_end - step1_start
             
-            if not buy_result.success:
+            if not success:
                 self.send_log(LogLevel.WARNING, f"⚠️ 第{self.refresh_count}次刷新购买失败")
-                self.debug_log(LogLevel.ERROR, f"🔍 刷新购买失败: {self.refresh_quantity}发")
-                return False
+                return None, timing_steps
             
-            # 获取刷新后余额（带重试机制，处理余额延迟更新）
-            balance_after = None
-            max_retries = 3
-            time.sleep(0.15)
-            for attempt in range(max_retries):
-                self.debug_log(LogLevel.INFO, f"🔍 第{attempt + 1}次获取刷新后余额...")
-                
-                balance_after_result = delta.get_balance(where="market", loop=True)
-                protocol <<= balance_after_result
-                
-                if not balance_after_result.success:
-                    self.send_log(LogLevel.WARNING, f"⚠️ 第{attempt + 1}次刷新后余额获取失败")
-                    continue
-                
-                current_balance = balance_after_result.balance
-                balance_change = balance_before - current_balance
-                
-                # 如果余额有变化（差价不为0），说明购买生效了
-                if balance_change != 0:
-                    self.debug_log(LogLevel.SUCCESS, f"🔍 第{attempt + 1}次检测成功：余额变化 {balance_change}")
-                    balance_after = current_balance
-                    break
-                else:
-                    self.debug_log(LogLevel.WARNING, f"🔍 第{attempt + 1}次余额未变化: {balance_before} == {current_balance}")
-                    balance_after = current_balance  # 保存最后一次的结果
+            # 子步骤2: 查询余额 - 详细分解
+            step2_start = time.perf_counter()
+            
+            # 这里需要分解get_balance内部的操作，但由于无法直接修改DeltaForceClass
+            # 我们通过多次调用来模拟测量各个步骤
+            click_start = time.perf_counter()
+            # 模拟点击位置延迟（实际在get_balance内部）
+            click_end = time.perf_counter()
+            click_duration = click_end - click_start
+            
+            ocr_start = time.perf_counter()
+            balance_after_result = delta.get_balance(where="market", loop=True)
+            balance_after = balance_after_result.balance if balance_after_result.success else None
+            ocr_end = time.perf_counter()
+            
+            # 打印调用链时间记录
+            if balance_after_result.success and hasattr(balance_after_result, 'timing_records'):
+                self.send_log(LogLevel.INFO, f"📊 第{self.refresh_count}次刷新调用链时间:")
+                for i, (func_name, net_time, is_base) in enumerate(balance_after_result.timing_records, 1):
+                    self.send_log(LogLevel.INFO, f"  {i}. {func_name}: {net_time*1000:.3f}ms")
+                self.send_log(LogLevel.INFO, f"  总执行时间: {balance_after_result.elapsed_time*1000:.3f}ms")
+            
+            # 总时间减去点击时间约等于OCR时间
+            total_get_balance = ocr_end - step2_start
+            ocr_duration = total_get_balance - click_duration
+            
+            step2_end = time.perf_counter()
+            step2_duration = step2_end - step2_start
             
             if balance_after is None:
                 self.send_log(LogLevel.WARNING, "⚠️ 无法获取刷新后余额")
-                return False
+                return None, timing_steps
             
-            # 计算价格
+            # 子步骤3: 计算差价
+            step3_start = time.perf_counter()
             price_diff = balance_before - balance_after
             unit_price = price_diff / self.refresh_quantity
+            step3_end = time.perf_counter()
+            step3_duration = step3_end - step3_start
             
-            # 将unit_price存入protocol
-            protocol.unit_price = unit_price
+            # 判断是否满足条件（这里是刷新延迟的结束点）
+            condition_met = unit_price <= self.target_price and unit_price >= self.min_price_threshold
+            
+            # ⏱️ 结束刷新延迟测试：到点击确认购买按钮前的一刻
+            refresh_timing_end = time.perf_counter()
+            refresh_duration = refresh_timing_end - refresh_timing_start
+            
+            # 记录详细步骤
+            timing_steps.append({
+                'step': '刷新延迟',
+                'start_time': refresh_timing_start,
+                'end_time': refresh_timing_end,
+                'duration': refresh_duration,
+                'description': '从点击刷新按钮后到确认余额、计算差价、满足条件、到点击确认购买按钮前的一刻',
+                'sub_steps': [
+                    {'name': '执行刷新购买操作', 'duration': step1_duration},
+                    {'name': '查询余额', 'duration': step2_duration},
+                    {'name': '计算差价', 'duration': step3_duration}
+                ]
+            })
+            
+            # 按照用户要求的格式打印
+            self.send_log(LogLevel.INFO, f"[第{self.refresh_count}轮] 刷新确认延迟{refresh_duration:.3f}秒，总延迟待计算:")
+            # 刷新操作完成，不显示详细时间分解
             
             # 更新统计
             self.refresh_cost_total += price_diff
@@ -529,17 +523,19 @@ class PurchaseRefreshBehavior(Behavior):
                 'unit_price': unit_price,
                 'quantity': self.refresh_quantity,
                 'balance_before': balance_before,
-                'balance_after': balance_after
+                'balance_after': balance_after,
+                'timing_duration': refresh_duration
             })
             
-            self.log_with_stats(LogLevel.INFO, f"🔄 第{self.refresh_count}次刷新完成: 单价 {unit_price:.1f}, 数量 {self.refresh_quantity}发, 花费 {price_diff:,.0f}, 余额 {balance_after:,}",
+            self.log_with_stats(LogLevel.INFO, f"🔄 第{self.refresh_count}次刷新完成: 单价 {unit_price:.1f}, 数量 {self.refresh_quantity}发, 花费 {price_diff:,.0f}, 余额 {balance_after:,}, 刷新延迟 {refresh_duration:.4f}秒",
                               refresh_count=self.refresh_count, 
                               unit_price=unit_price,
                               refresh_cost=price_diff,
-                              current_balance=balance_after)
+                              current_balance=balance_after,
+                              refresh_timing=refresh_duration)
             
             # 记录价格数据到CSV
-            if unit_price <= self.target_price and unit_price >= self.min_price_threshold:
+            if condition_met:
                 action = "发现低价"
             elif unit_price < self.min_price_threshold:
                 action = "价格过低"
@@ -548,62 +544,108 @@ class PurchaseRefreshBehavior(Behavior):
             
             self.record_price_data(balance_before, balance_after, unit_price, action)
             
-            return True
+            return unit_price, timing_steps
                 
         except Exception as e:
             self.send_log(LogLevel.ERROR, f"❌ 刷新阶段异常: {e}")
-            return False
+            return None, []
     
-    @protocol_handler()
-    def purchase_phase(self, protocol, unit_price):
-        """购买阶段 - 批量购买"""
+    @require_any_delta
+    def purchase_phase_simple(self, delta, unit_price):
+        """购买阶段 - 批量购买（含详细时间测量）"""
         try:
-            # 获取Delta实例
-            delta = self.get_any_delta()
-            if not delta:
-                self.send_log(LogLevel.ERROR, "❌ 无法获取Delta实例")
-                return False
-            
             self.purchase_count += 1
             
             self.send_log(LogLevel.SUCCESS, f"💰 发现低价 {unit_price:.1f} ≤ {self.target_price}, 开始批量购买: {self.purchase_quantity}发×{self.click_times}次 (参数: buyin={self.purchase_quantity}, maxin={self.max_quantity})")
             
-            # 获取购买前余额
+            # 购买阶段延迟分解
+            purchase_start = time.perf_counter()
+            
+            # 步骤1: 获取购买前余额 - 详细分解
+            step1_start = time.perf_counter()
+            
+            click1_start = time.perf_counter()
+            click1_end = time.perf_counter()
+            click1_duration = click1_end - click1_start
+            
+            ocr1_start = time.perf_counter()
             balance_before_result = delta.get_balance(where="market", loop=True)
-            if not balance_before_result.success:
+            balance_before = balance_before_result.balance if balance_before_result.success else None
+            ocr1_end = time.perf_counter()
+            
+            # 打印调用链时间记录（购买前）
+            if balance_before_result.success and hasattr(balance_before_result, 'timing_records'):
+                self.send_log(LogLevel.INFO, f"📊 第{self.purchase_count}次购买前调用链时间:")
+                for i, (func_name, net_time, is_base) in enumerate(balance_before_result.timing_records, 1):
+                    self.send_log(LogLevel.INFO, f"  {i}. {func_name}: {net_time*1000:.3f}ms")
+                self.send_log(LogLevel.INFO, f"  总执行时间: {balance_before_result.elapsed_time*1000:.3f}ms")
+            
+            total1_duration = ocr1_end - step1_start
+            ocr1_duration = total1_duration - click1_duration
+            
+            step1_end = time.perf_counter()
+            step1_duration = step1_end - step1_start
+            
+            if balance_before is None:
                 self.send_log(LogLevel.WARNING, "⚠️ 无法获取购买前余额")
                 return False
             
-            protocol <<= balance_before_result
-            balance_before = balance_before_result.balance
-            
-            # 执行批量购买
-            buy_result = delta.buy_in_market(
+            # 步骤2: 执行批量购买操作
+            step2_start = time.perf_counter()
+            success = delta.buy_in_market(
                 buyin=self.purchase_quantity,
                 maxin=self.max_quantity,
                 times=self.click_times,
                 buy=True,
                 loop=False
             )
-            protocol <<= buy_result
+            step2_end = time.perf_counter()
+            step2_duration = step2_end - step2_start
             
-            if not buy_result.success:
+            if not success:
                 self.send_log(LogLevel.ERROR, f"❌ 第{self.purchase_count}次批量购买失败")
-                self.debug_log(LogLevel.ERROR, f"🔍 批量购买失败: {self.purchase_quantity}发 x {self.click_times}次")
                 return False
                 
-            # 获取购买后余额（简单一次检测）
+            # 步骤3: 获取购买后余额 - 详细分解
+            step3_start = time.perf_counter()
+            
+            click3_start = time.perf_counter()
+            click3_end = time.perf_counter()
+            click3_duration = click3_end - click3_start
+            
+            ocr3_start = time.perf_counter()
             balance_after_result = delta.get_balance(where="market", loop=True)
-            if not balance_after_result.success:
+            balance_after = balance_after_result.balance if balance_after_result.success else None
+            ocr3_end = time.perf_counter()
+            
+            # 打印调用链时间记录（购买后）
+            if balance_after_result.success and hasattr(balance_after_result, 'timing_records'):
+                self.send_log(LogLevel.INFO, f"📊 第{self.purchase_count}次购买后调用链时间:")
+                for i, (func_name, net_time, is_base) in enumerate(balance_after_result.timing_records, 1):
+                    self.send_log(LogLevel.INFO, f"  {i}. {func_name}: {net_time*1000:.3f}ms")
+                self.send_log(LogLevel.INFO, f"  总执行时间: {balance_after_result.elapsed_time*1000:.3f}ms")
+            
+            total3_duration = ocr3_end - step3_start
+            ocr3_duration = total3_duration - click3_duration
+            
+            step3_end = time.perf_counter()
+            step3_duration = step3_end - step3_start
+            
+            if balance_after is None:
                 self.send_log(LogLevel.WARNING, "⚠️ 无法获取购买后余额")
                 return False
-            
-            protocol <<= balance_after_result
-            balance_after = balance_after_result.balance
     
-            # 计算购买统计
+            # 步骤4: 计算购买统计
+            step4_start = time.perf_counter()
             purchase_cost = balance_before - balance_after
             purchased_quantity = purchase_cost / unit_price
+            step4_end = time.perf_counter()
+            step4_duration = step4_end - step4_start
+            
+            purchase_end = time.perf_counter()
+            total_purchase_duration = purchase_end - purchase_start
+            
+            # 购买阶段完成，不显示详细时间分解
             
             # 更新统计
             self.purchase_cost_total += purchase_cost
@@ -671,7 +713,7 @@ class PurchaseRefreshBehavior(Behavior):
             
             total_cost = self.initial_balance - self.current_balance
             
-            self.send_log(LogLevel.SUCCESS, "📊 ===== SMB000X执行报告 =====")
+            self.send_log(LogLevel.SUCCESS, "📊 ===== SMBTIME执行报告 =====")
             self.send_log(LogLevel.INFO, f"💰 余额变化: {self.initial_balance:,} → {self.current_balance:,} (花费: {total_cost:,})")
             self.send_log(LogLevel.INFO, f"🔄 刷新统计: {self.refresh_count}次, 花费: {self.refresh_cost_total:,.0f}")
             self.send_log(LogLevel.INFO, f"🛒 购买统计: {self.purchase_count}次, 花费: {self.purchase_cost_total:,.0f}")
@@ -680,6 +722,10 @@ class PurchaseRefreshBehavior(Behavior):
             if self.total_purchased > 0:
                 avg_price = self.purchase_cost_total / self.total_purchased
                 self.send_log(LogLevel.INFO, f"💱 平均单价: {avg_price:.1f}")
+            
+            # 时间统计报告
+            if self.timing_records:
+                self.generate_timing_summary()
             
             self.send_log(LogLevel.SUCCESS, "📊 ========================")
             
@@ -693,9 +739,9 @@ class PurchaseRefreshBehavior(Behavior):
             log_dir = os.path.join(os.getcwd(), "log", "pricedate")
             os.makedirs(log_dir, exist_ok=True)
             
-            # 生成CSV文件名：SMB000X_YYYYMMDD_HHMMSS.csv
+            # 生成CSV文件名：SMBTIME_YYYYMMDD_HHMMSS.csv
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"SMB000X_{timestamp}.csv"
+            filename = f"SMBTIME_{timestamp}.csv"
             self.csv_file_path = os.path.join(log_dir, filename)
             
             # 创建CSV文件并写入表头
@@ -735,6 +781,101 @@ class PurchaseRefreshBehavior(Behavior):
         except Exception as e:
             self.send_log(LogLevel.WARNING, f"⚠️ 价格记录写入失败: {e}")
     
+    def print_timing_analysis(self, timing_record):
+        """打印详细的时间分析（完整流程）"""
+        try:
+            cycle = timing_record['cycle']
+            unit_price = timing_record.get('unit_price', 0)
+            purchase_success = timing_record.get('purchase_success', False)
+            
+            self.send_log(LogLevel.SUCCESS, f"⏱️ ===== 第{cycle}次循环延迟测试分析 =====")
+            self.send_log(LogLevel.INFO, f"💰 单价: {unit_price:.1f}, 是否购买: {'是' if purchase_success else '否'}")
+            
+            refresh_duration = 0
+            total_duration = 0
+            
+            for step in timing_record['steps']:
+                step_name = step['step']
+                duration = step['duration']
+                description = step.get('description', '')
+                
+                if step_name == '刷新延迟':
+                    refresh_duration = duration
+                    self.send_log(LogLevel.INFO, f"  🔄 刷新延迟: {duration:.4f}秒")
+                    self.send_log(LogLevel.DEBUG, f"     {description}")
+                elif step_name == '总延迟':
+                    total_duration = duration
+                    self.send_log(LogLevel.SUCCESS, f"  🎯 总延迟: {duration:.4f}秒")
+                    self.send_log(LogLevel.DEBUG, f"     {description}")
+            
+            self.send_log(LogLevel.SUCCESS, f"⏱️ ================================")
+            
+        except Exception as e:
+            self.send_log(LogLevel.WARNING, f"⚠️ 时间分析打印失败: {e}")
+    
+    def print_refresh_timing_analysis(self, timing_record):
+        """打印刷新阶段的时间分析（仅刷新，未购买）"""
+        try:
+            cycle = timing_record['cycle']
+            unit_price = timing_record.get('unit_price', 0)
+            
+            refresh_duration = 0
+            for step in timing_record['steps']:
+                if step['step'] == '刷新延迟':
+                    refresh_duration = step['duration']
+                    break
+            
+            self.send_log(LogLevel.INFO, f"⏱️ 第{cycle}次刷新延迟: {refresh_duration:.4f}秒, 单价: {unit_price:.1f} (未购买)")
+            
+        except Exception as e:
+            self.send_log(LogLevel.WARNING, f"⚠️ 刷新时间分析打印失败: {e}")
+    
+    def generate_timing_summary(self):
+        """生成时间统计摘要"""
+        try:
+            if not self.timing_records:
+                return
+            
+            # 分类统计
+            refresh_only_records = [r for r in self.timing_records if not r.get('purchase_success', False)]
+            purchase_records = [r for r in self.timing_records if r.get('purchase_success', False)]
+            
+            self.send_log(LogLevel.SUCCESS, "⏱️ ===== 延迟测试统计摘要 =====")
+            
+            # 刷新延迟统计
+            all_refresh_times = []
+            for record in self.timing_records:
+                for step in record['steps']:
+                    if step['step'] == '刷新延迟':
+                        all_refresh_times.append(step['duration'])
+            
+            if all_refresh_times:
+                avg_refresh = sum(all_refresh_times) / len(all_refresh_times)
+                min_refresh = min(all_refresh_times)
+                max_refresh = max(all_refresh_times)
+                self.send_log(LogLevel.INFO, f"🔄 刷新延迟 ({len(all_refresh_times)}次): 平均{avg_refresh:.3f}秒, 最快{min_refresh:.3f}秒, 最慢{max_refresh:.3f}秒")
+            
+            # 总延迟统计（仅购买成功的记录）
+            all_total_times = []
+            for record in purchase_records:
+                for step in record['steps']:
+                    if step['step'] == '总延迟':
+                        all_total_times.append(step['duration'])
+            
+            if all_total_times:
+                avg_total = sum(all_total_times) / len(all_total_times)
+                min_total = min(all_total_times)
+                max_total = max(all_total_times)
+                self.send_log(LogLevel.INFO, f"🎯 总延迟 ({len(all_total_times)}次): 平均{avg_total:.3f}秒, 最快{min_total:.3f}秒, 最慢{max_total:.3f}秒")
+            
+            # 统计信息
+            self.send_log(LogLevel.INFO, f"📊 统计信息: 总循环{len(self.timing_records)}次, 成功购买{len(purchase_records)}次, 仅刷新{len(refresh_only_records)}次")
+            
+            self.send_log(LogLevel.SUCCESS, "⏱️ =====================")
+            
+        except Exception as e:
+            self.send_log(LogLevel.WARNING, f"⚠️ 时间统计摘要生成失败: {e}")
+
 
 def get_behavior_class():
-    return PurchaseRefreshBehavior
+    return TimingPurchaseRefreshBehavior

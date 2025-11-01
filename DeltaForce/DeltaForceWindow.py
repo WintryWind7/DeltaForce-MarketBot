@@ -5,6 +5,9 @@ import threading
 import ctypes
 from typing import Optional, Dict, Any, Tuple
 
+# 导入协议装饰器
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'base'))
+
 # 添加core目录到Python路径
 core_path = os.path.join(os.path.dirname(__file__), '..', 'core')
 sys.path.insert(0, core_path)
@@ -65,14 +68,14 @@ class DeltaForceWindow(object):
         self.is_monitoring = False
         self.monitor_duration = 10
         
-    def _get_dpi_for_window(self, hwnd: int) -> Tuple[float, float]:
+    def _get_dpi_for_window(self, hwnd: int):
         """获取指定窗口的DPI值"""
         try:
             # 尝试使用Windows 10+的GetDpiForWindow API
             if hasattr(ctypes.windll.user32, 'GetDpiForWindow'):
                 dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
                 if dpi > 0:
-                    return float(dpi), float(dpi)
+                    return (float(dpi), float(dpi))
             
             # 回退到GetDeviceCaps方法
             dc = ctypes.windll.user32.GetDC(hwnd)
@@ -81,7 +84,7 @@ class DeltaForceWindow(object):
                     dpi_x = ctypes.windll.gdi32.GetDeviceCaps(dc, 88)  # LOGPIXELSX
                     dpi_y = ctypes.windll.gdi32.GetDeviceCaps(dc, 90)  # LOGPIXELSY
                     if dpi_x > 0 and dpi_y > 0:
-                        return float(dpi_x), float(dpi_y)
+                        return (float(dpi_x), float(dpi_y))
                 finally:
                     ctypes.windll.user32.ReleaseDC(hwnd, dc)
             
@@ -92,7 +95,7 @@ class DeltaForceWindow(object):
             print(f"获取窗口DPI时出错: {e}")
             return self._get_system_dpi()
     
-    def _get_system_dpi(self) -> Tuple[float, float]:
+    def _get_system_dpi(self):
         """获取系统DPI值"""
         try:
             dc = ctypes.windll.user32.GetDC(0)
@@ -101,13 +104,13 @@ class DeltaForceWindow(object):
                     dpi_x = ctypes.windll.gdi32.GetDeviceCaps(dc, 88)
                     dpi_y = ctypes.windll.gdi32.GetDeviceCaps(dc, 90)
                     if dpi_x > 0 and dpi_y > 0:
-                        return float(dpi_x), float(dpi_y)
+                        return (float(dpi_x), float(dpi_y))
                 finally:
                     ctypes.windll.user32.ReleaseDC(0, dc)
         except Exception as e:
             print(f"获取系统DPI时出错: {e}")
         
-        return 96.0, 96.0
+        return (96.0, 96.0)
     
     def _update_window_info(self):
         """更新窗口信息到实例属性"""
@@ -131,7 +134,7 @@ class DeltaForceWindow(object):
         except Exception as e:
             print(f"更新窗口信息时出错: {e}")
     
-    def find_deltaforce_process(self) -> Optional[int]:
+    def find_deltaforce_process(self):
         """查找DeltaForceClient进程窗口"""
         try:
             # 方法1: 通过进程名查找
@@ -148,14 +151,15 @@ class DeltaForceWindow(object):
             # 如果找到窗口，立即更新窗口信息
             if self.target_window_handle:
                 self._update_window_info()
-            
-            return self.target_window_handle
+                return True
+            else:
+                return False
             
         except Exception as e:
             print(f"查找DeltaForce进程时出错: {e}")
-            return None
+            return False
     
-    def get_process_info(self) -> Dict[str, Any]:
+    def get_process_info(self):
         """获取DeltaForce进程的详细信息"""
         if self.target_window_handle is None:
             if not self.find_deltaforce_process():
@@ -183,12 +187,12 @@ class DeltaForceWindow(object):
         """开始监控窗口变化"""
         if self.is_monitoring:
             print("窗口监控已在运行中")
-            return
+            return False
             
         if self.target_window_handle is None:
             if not self.find_deltaforce_process():
                 print("未找到DeltaForce进程，无法开始监控")
-                return
+                return False
         
         self.is_monitoring = True
         self.monitor_duration = duration
@@ -196,23 +200,19 @@ class DeltaForceWindow(object):
         def monitor():
             start_time = time.time()
             while self.is_monitoring and (time.time() - start_time) < self.monitor_duration:
-                try:
-                    if self.target_window_handle:
-                        current_info = get_window_info(self.target_window_handle)
-                        
-                        # 检查是否有变化
-                        if (current_info.get("left") != self.window_x or
-                            current_info.get("top") != self.window_y or
-                            current_info.get("width") != self.window_width or
-                            current_info.get("height") != self.window_height):
-                            
-                            self._update_window_info()
-                            print(f"窗口变化: 位置({self.window_x}, {self.window_y}) 尺寸({self.window_width}, {self.window_height})")
+                if self.target_window_handle:
+                    current_info = get_window_info(self.target_window_handle)
                     
-                    time.sleep(0.1)
-                except Exception as e:
-                    print(f"监控出错: {e}")
-                    time.sleep(1)
+                    # 检查是否有变化
+                    if (current_info.get("left") != self.window_x or
+                        current_info.get("top") != self.window_y or
+                        current_info.get("width") != self.window_width or
+                        current_info.get("height") != self.window_height):
+                        
+                        self._update_window_info()
+                        print(f"窗口变化: 位置({self.window_x}, {self.window_y}) 尺寸({self.window_width}, {self.window_height})")
+                
+                time.sleep(0.1)
             
             if self.is_monitoring:
                 print("监控时间到，自动停止")
@@ -220,17 +220,19 @@ class DeltaForceWindow(object):
         
         threading.Thread(target=monitor, daemon=True).start()
         print(f"开始监控窗口变化，将持续{duration}秒...")
+        return True
     
     def stop_monitoring(self):
         """停止监控窗口变化"""
         self.is_monitoring = False
         print("停止监控窗口变化")
+        return True
     
-    def is_process_running(self) -> bool:
+    def is_process_running(self):
         """检查DeltaForce进程是否正在运行"""
-        return self.find_deltaforce_process() is not None
+        return self.find_deltaforce_process()
     
-    def wait_for_process(self, timeout: int = 30) -> bool:
+    def wait_for_process(self, timeout: int = 30):
         """等待DeltaForce进程启动"""
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -239,7 +241,7 @@ class DeltaForceWindow(object):
             time.sleep(1)
         return False
     
-    def get_scaled_size(self) -> Tuple[int, int]:
+    def get_scaled_size(self):
         """获取乘算后的窗口尺寸（物理尺寸 × DPI缩放因子）
         
         返回:
@@ -254,7 +256,7 @@ class DeltaForceWindow(object):
         
         return (scaled_width, scaled_height)
     
-    def get_scaled_position(self) -> Tuple[int, int]:
+    def get_scaled_position(self):
         """获取乘算后的窗口位置（物理坐标 × DPI缩放因子）
         
         返回:
@@ -269,7 +271,7 @@ class DeltaForceWindow(object):
         
         return (scaled_x, scaled_y)
     
-    def ratio_to_screen_coords(self, x_ratio: float, y_ratio: float) -> Tuple[int, int]:
+    def ratio_to_screen_coords(self, x_ratio: float, y_ratio: float):
         """将窗口内的比例坐标转换为实际屏幕坐标（物理坐标）
         
         参数:
@@ -313,21 +315,18 @@ class DeltaForceWindow(object):
         
         return (screen_x, screen_y)
     
-    def switch_to_deltaforce_window(self) -> bool:
+    def switch_to_deltaforce_window(self):
         """切换到DeltaForce游戏窗口"""
         if self.target_window_handle is None:
             if not self.find_deltaforce_process():
                 return False
         
-        try:
-            # 使用Windows API将窗口置于前台
-            ctypes.windll.user32.SetForegroundWindow(self.target_window_handle)
-            # 确保窗口不是最小化状态
-            ctypes.windll.user32.ShowWindow(self.target_window_handle, 9)  # SW_RESTORE
-            print("切换到游戏窗口")
-            return True
-        except Exception as e:
-            return False
+        # 使用Windows API将窗口置于前台
+        ctypes.windll.user32.SetForegroundWindow(self.target_window_handle)
+        # 确保窗口不是最小化状态
+        ctypes.windll.user32.ShowWindow(self.target_window_handle, 9)  # SW_RESTORE
+        print("切换到游戏窗口")
+        return True
     
     def get_all_deltaforce_windows(self):
         """获取所有DeltaForce窗口信息"""
@@ -353,34 +352,33 @@ class DeltaForceWindow(object):
     
     def switch_to_window(self, hwnd):
         """切换到指定的窗口句柄"""
-        try:
-            import ctypes
-            # 设置前台窗口
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
-            # 确保窗口不是最小化状态
-            ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        import ctypes
+        # 设置前台窗口
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        # 确保窗口不是最小化状态
+        ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        
+        # 更新当前目标窗口
+        self.target_window_handle = hwnd
+        
+        # 获取窗口信息并更新尺寸
+        win_info = get_window_info(hwnd)
+        if win_info:
+            self.window_width = win_info.get('width', 1920)
+            self.window_height = win_info.get('height', 1080)
+            self.window_x = win_info.get('x', 0)
+            self.window_y = win_info.get('y', 0)
             
-            # 更新当前目标窗口
-            self.target_window_handle = hwnd
             
-            # 获取窗口信息并更新尺寸
-            win_info = get_window_info(hwnd)
-            if win_info:
-                self.window_width = win_info.get('width', 1920)
-                self.window_height = win_info.get('height', 1080)
-                self.window_x = win_info.get('x', 0)
-                self.window_y = win_info.get('y', 0)
-                
-                # 将鼠标移动到窗口中心，避免触发PyAutoGUI的fail-safe
-                center_x = self.window_x + self.window_width // 2
-                center_y = self.window_y + self.window_height // 2
-                
-                import pyautogui
-                pyautogui.moveTo(center_x, center_y)
+            # 将鼠标移动到窗口中心，避免触发PyAutoGUI的fail-safe
+            center_x = self.window_x + self.window_width // 2
+            center_y = self.window_y + self.window_height // 2
+            
+            import pyautogui
+            pyautogui.moveTo(center_x, center_y)
             
             return True
-        except Exception as e:
-            print(f"切换窗口失败: {e}")
+        else:
             return False
     
     def classify_windows_by_size(self, windows):

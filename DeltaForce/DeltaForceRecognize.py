@@ -8,6 +8,12 @@ import easyocr
 import numpy as np
 from PIL import ImageGrab, Image
 import cv2
+import os
+import sys
+
+# 导入协议装饰器
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'base'))
+from decorators import protocol_handler
 
 
 class DeltaForceRecognize(DeltaForceWindow):
@@ -20,7 +26,8 @@ class DeltaForceRecognize(DeltaForceWindow):
         super().__init__()
         self.ocr = OCR()
     
-    def recognize(self, top_left_ratio: Tuple[float, float], bottom_right_ratio: Tuple[float, float], save: bool = False, allow_list: str = None, return_image: bool = False, preprocess_type: str = None, debug: bool = False):
+    @protocol_handler()
+    def recognize(self, protocol, top_left_ratio: Tuple[float, float], bottom_right_ratio: Tuple[float, float], save: bool = False, allow_list: str = None, return_image: bool = False, preprocess_type: str = None, debug: bool = False) -> bool:
         """根据游戏窗口内的相对比例坐标进行截图识别
         
         参数:
@@ -47,7 +54,8 @@ class DeltaForceRecognize(DeltaForceWindow):
         # 检查窗口是否已找到
         if self.target_window_handle is None:
             print("错误: 未找到游戏窗口，请先调用find_deltaforce_process()")
-            return ""
+            protocol.error_message = "未找到游戏窗口"
+            return False
         
         # 更新窗口信息确保数据最新
         self._update_window_info()
@@ -57,15 +65,24 @@ class DeltaForceRecognize(DeltaForceWindow):
         screen_right, screen_bottom = self.ratio_to_screen_coords(bottom_right_ratio[0], bottom_right_ratio[1])
         
         # 调用OCR识别
-        try:
-            result = self.ocr.recognize((screen_left, screen_top), (screen_right, screen_bottom), save=save, allow_list=allow_list, return_image=return_image, preprocess_type=preprocess_type, debug=debug)
-            # print((screen_left, screen_top), (screen_right, screen_bottom))
-            return result
-        except Exception as e:
-            print(f"OCR识别失败: {e}")
-            if debug:
-                return ("", None, []) if return_image else ("", [])
-            return ("", None) if return_image else ""
+        result = self.ocr.recognize((screen_left, screen_top), (screen_right, screen_bottom), save=save, allow_list=allow_list, return_image=return_image, preprocess_type=preprocess_type, debug=debug)
+        # print((screen_left, screen_top), (screen_right, screen_bottom))
+        
+        # 将结果存储到协议中
+        if return_image:
+            protocol.recognized_text = result[0] if result else ""
+            protocol.image = result[1] if result and len(result) > 1 else None
+        else:
+            protocol.recognized_text = result if result else ""
+        
+        protocol.coordinates = {
+            'screen_left': screen_left,
+            'screen_top': screen_top, 
+            'screen_right': screen_right,
+            'screen_bottom': screen_bottom
+        }
+        
+        return bool(result)
 
 
 class OCR:
@@ -100,7 +117,8 @@ class OCR:
         except ImportError:
             print("⚠️ 无法检测GPU状态（PyTorch未安装）")
     
-    def _screenshot(self, top_left: Tuple[int, int], bottom_right: Tuple[int, int]) -> np.ndarray:
+    @protocol_handler()
+    def _screenshot(self, protocol, top_left: Tuple[int, int], bottom_right: Tuple[int, int]) -> bool:
         """
         根据坐标进行截图
         
@@ -129,7 +147,8 @@ class OCR:
             print(f"截图失败: {e}")
             return None
     
-    def _preprocess_image(self, image: np.ndarray, preprocess_type: str = None) -> np.ndarray:
+    @protocol_handler()
+    def _preprocess_image(self, protocol, image: np.ndarray, preprocess_type: str = None) -> bool:
         """
         图像预处理函数
         
@@ -146,7 +165,8 @@ class OCR:
             # 无预处理或未知类型，返回原图
             return image
     
-    def _preprocess_peizhuang(self, image: np.ndarray) -> np.ndarray:
+    @protocol_handler()
+    def _preprocess_peizhuang(self, protocol, image: np.ndarray) -> bool:
         """
         配装预处理：只进行裁剪，直接返回原图像
         
@@ -252,7 +272,8 @@ class OCR:
             print(f"配装预处理失败: {e}")
             return image
     
-    def _split_wide_contour(self, image, x, y, w, h):
+    @protocol_handler()
+    def _split_wide_contour(self, protocol, image, x, y, w, h) -> bool:
         """
         分割过宽的轮廓，找到最细的一列并涂成白色进行分割
         
@@ -305,7 +326,8 @@ class OCR:
         except Exception as e:
             pass  # 分割失败时继续处理
     
-    def _is_independent_comma(self, comma_contour, all_contours, cx, cy, cw, ch):
+    @protocol_handler()
+    def _is_independent_comma(self, protocol, comma_contour, all_contours, cx, cy, cw, ch) -> bool:
         """
         检测小形状是否为独立的逗号（不与其他字符水平或垂直相连，斜向相连不算相连）
         
@@ -349,7 +371,8 @@ class OCR:
         except Exception as e:
             return True  # 出错时默认处理为逗号
     
-    def _is_near_or_connected(self, x1, y1, w1, h1, x2, y2, w2, h2, margin):
+    @protocol_handler()
+    def _is_near_or_connected(self, protocol, x1, y1, w1, h1, x2, y2, w2, h2, margin) -> bool:
         """
         检查两个矩形是否相连（只考虑水平或垂直相连，斜向相连不算）
         
@@ -385,7 +408,8 @@ class OCR:
         # 只有水平或垂直相连才算相连，斜向相连不算
         return horizontal_connected or vertical_connected
     
-    def _postprocess_peizhuang_text(self, text: str, allow_list: str = None) -> str:
+    @protocol_handler()
+    def _postprocess_peizhuang_text(self, protocol, text: str, allow_list: str = None) -> bool:
         """
         配装类型的文本后处理，只保留数字字符
         
@@ -403,7 +427,8 @@ class OCR:
         filtered = ''.join(char for char in text if char.isdigit())
         return filtered
     
-    def _recognize_text(self, image: Union[np.ndarray, Image.Image, str], allow_list: str = None, preprocess_type: str = None) -> List[str]:
+    @protocol_handler()
+    def _recognize_text(self, protocol, image: Union[np.ndarray, Image.Image, str], allow_list: str = None, preprocess_type: str = None) -> bool:
         """
         识别图片中的文字
         
@@ -461,7 +486,8 @@ class OCR:
             print(f"文字识别失败: {e}")
             return []
     
-    def _recognize_text_debug(self, image: Union[np.ndarray, Image.Image, str]) -> List[Tuple]:
+    @protocol_handler()
+    def _recognize_text_debug(self, protocol, image: Union[np.ndarray, Image.Image, str]) -> bool:
         """
         识别图片中的文字（调试模式），返回完整结果
         
@@ -496,7 +522,8 @@ class OCR:
             print(f"文字识别失败: {e}")
             return []
     
-    def recognize(self, top_left: Tuple[int, int], bottom_right: Tuple[int, int], save: bool = False, allow_list: str = None, return_image: bool = False, preprocess_type: str = None, debug: bool = False):
+    @protocol_handler()
+    def recognize(self, protocol, top_left: Tuple[int, int], bottom_right: Tuple[int, int], save: bool = False, allow_list: str = None, return_image: bool = False, preprocess_type: str = None, debug: bool = False) -> bool:
         """
         从指定坐标截图并识别文字
         
@@ -515,7 +542,8 @@ class OCR:
         screenshot = self._screenshot(top_left, bottom_right)
         
         if screenshot is None:
-            return ("", None) if return_image else ""
+            protocol.error_message = "截图失败"
+            return False
         
         # 图像预处理
         processed_image = self._preprocess_image(screenshot, preprocess_type)
@@ -535,12 +563,13 @@ class OCR:
         recognized_text = " ".join(text_list) if text_list else ""
         
         # 根据参数决定返回内容（返回预处理后的图片）
+        protocol.recognized_text = recognized_text
         if return_image:
-            return (recognized_text, processed_pil)
-        else:
-            return recognized_text
+            protocol.processed_image = processed_pil
+        return True
     
-    def debug(self, top_left: Tuple[int, int], bottom_right: Tuple[int, int]) -> List[Tuple]:
+    @protocol_handler()
+    def debug(self, protocol, top_left: Tuple[int, int], bottom_right: Tuple[int, int]) -> bool:
         """
         调试模式：从指定坐标截图并返回详细的识别结果
         
