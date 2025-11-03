@@ -25,6 +25,12 @@ from enum import Enum
 from typing import Optional, Dict, Any, Callable
 from functools import wraps
 
+# 导入协议格式化器
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from base import ProtocolFormatter
+
 class LogLevel(Enum):
     """日志级别"""
     DEBUG = "DEBUG"
@@ -400,6 +406,11 @@ class Behavior(QThread):
         self.log_manager = None  # 将在日志线程中创建
         
         # ================================
+        # 协议格式化器（用于统一打印调用链）
+        # ================================
+        self.formatter = ProtocolFormatter()
+        
+        # ================================
         # 监听线程配置
         # ================================
         self.monitor_startup_delay = 3.0  # 监听启动延迟
@@ -698,6 +709,12 @@ class Behavior(QThread):
             try:
                 self.system_log(LogLevel.INFO, f"🎮 [{thread_name}] 启动 (第三优先级)")
                 
+                # 自动检查Delta实例是否就绪
+                if not self.is_delta_ready():
+                    self.system_log(LogLevel.ERROR, "❌ Delta实例未就绪，无法执行游戏操作")
+                    success = self.exit_behavior("Delta实例未就绪", success=False)
+                    return
+                
                 # 执行子类的主业务逻辑
                 success = self.main_logic()
                 
@@ -734,8 +751,8 @@ class Behavior(QThread):
             message: 日志内容
             **kwargs: 额外的统计数据 (如 refresh_count=5, balance=1000000)
         """
-        # 如果开启debug模式，只输出debug_log的消息，过滤普通日志
-        if getattr(self, 'debug_mode', False):
+        # 如果开启debug模式（1或2），只输出debug_log的消息，过滤普通日志
+        if getattr(self, 'debug_mode', 0) > 0:
             return  # debug模式下不输出普通日志
         
         self._send_log(level, message, **kwargs)
@@ -749,10 +766,11 @@ class Behavior(QThread):
             message: 日志内容
             **kwargs: 额外的统计数据
         """
-        # 只在debug模式下输出
-        if getattr(self, 'debug_mode', False):
-            # 添加DEBUG标识
-            debug_message = f"[DEBUG] {message}"
+        # 只在debug模式（1或2）下输出
+        if getattr(self, 'debug_mode', 0) > 0:
+            # 根据 debug_mode 添加不同的标识
+            mode_label = "SIMPLE" if getattr(self, 'debug_mode', 0) == 1 else "DETAIL"
+            debug_message = f"[{mode_label}] {message}"
             self._send_log(level, debug_message, **kwargs)
     
     def system_log(self, level: LogLevel, message: str, **kwargs):
@@ -1086,13 +1104,8 @@ class Behavior(QThread):
     
     def _emergency_stop(self):
         """紧急停止 - Q键触发"""
-        self.master_stop_event.set()
-        
-        # 发送停止命令
-        try:
-            self.command_queue.put(ThreadCommand.STOP, timeout=0.1)
-        except:
-            pass
+        # 调用统一的退出函数
+        self.exit_behavior("Q键退出", success=True)
     
     def _wait_for_completion(self):
         """主线程等待完成"""
@@ -1120,10 +1133,12 @@ class Behavior(QThread):
             # 设置停止事件
             self.master_stop_event.set()
             
-            # 等待所有子线程结束
+            # 等待所有子线程结束（跳过当前线程）
+            import threading
+            current_thread = threading.current_thread()
             with self.threads_lock:
                 for thread in self.child_threads:
-                    if thread.is_alive():
+                    if thread.is_alive() and thread != current_thread:
                         thread.join(timeout=2.0)  # 最多等待2秒
                         if thread.is_alive():
                             self._direct_log(f"⚠️ 线程 {thread.name} 未能正常结束")
@@ -1143,6 +1158,15 @@ class Behavior(QThread):
             
         except Exception as e:
             self._direct_log(f"❌ 线程清理异常: {e}")
+    
+    def _cleanup_delta_instances(self):
+        """清理Delta实例资源"""
+        try:
+            if hasattr(self, 'delta_manager') and self.delta_manager:
+                # Delta manager会自动管理所有实例的清理
+                pass
+        except Exception as e:
+            self._direct_log(f"❌ Delta实例清理异常: {e}")
     
     def _clear_all_queues(self):
         """清空所有队列"""
@@ -1177,8 +1201,82 @@ class Behavior(QThread):
             pass
     
     # ================================
-    # 自动关机功能
+    # 线程退出和自动关机功能
     # ================================
+    def exit_behavior(self, reason, success=True):
+        """
+        统一的行为退出函数，用于异常处理和正常退出
+        
+        该函数会依次关闭所有线程：主逻辑线程 → 日志线程 → 监听线程
+        
+        Args:
+            reason (str): 退出原因
+            success (bool): 是否成功退出，默认True
+        
+        Returns:
+            bool: 返回success参数值
+        
+        使用示例:
+            # 正常退出
+            return self.exit_behavior("任务完成", success=True)
+            
+            # 异常退出
+            return self.exit_behavior("初始化失败", success=False)
+            
+            # 在异常处理中使用
+            except Exception as e:
+                self.send_log(LogLevel.ERROR, f"❌ 执行异常: {e}")
+                return self.exit_behavior(f"异常退出: {e}", success=False)
+        """
+        try:
+            # 记录退出原因
+            if success:
+                self.send_log(LogLevel.SUCCESS, f"✅ 行为退出: {reason}")
+            else:
+                self.send_log(LogLevel.ERROR, f"❌ 行为退出: {reason}")
+            
+            # 生成最终报告（如果有）
+            if hasattr(self, 'generate_final_report'):
+                try:
+                    self.generate_final_report()
+                except Exception as e:
+                    self.send_log(LogLevel.WARNING, f"⚠️ 生成报告失败: {e}")
+            
+            # 处理程序结束（包括关机检查）
+            self.handle_program_completion(reason)
+            
+            # 依次关闭所有线程
+            self.system_log(LogLevel.INFO, "🔄 开始关闭所有线程...")
+            
+            # 1. 设置停止事件（通知主逻辑线程停止）
+            self.master_stop_event.set()
+            self.system_log(LogLevel.INFO, "✅ 主逻辑线程停止信号已发送")
+            
+            # 2. 等待主逻辑线程结束
+            import time
+            time.sleep(0.5)  # 给主逻辑线程一点时间完成当前操作
+            
+            # 3. 日志线程会在检测到 master_stop_event 后自动停止
+            self.system_log(LogLevel.INFO, "✅ 日志线程将自动停止")
+            
+            # 4. 监听线程会在检测到 master_stop_event 后自动停止
+            self.system_log(LogLevel.INFO, "✅ 监听线程将自动停止")
+            
+            # 5. 清理所有线程
+            self._cleanup_all_threads()
+            
+            return success
+            
+        except Exception as e:
+            self.send_log(LogLevel.ERROR, f"❌ 退出处理异常: {e}")
+            # 即使异常也要设置停止事件并清理
+            self.master_stop_event.set()
+            try:
+                self._cleanup_all_threads()
+            except:
+                pass
+            return False
+    
     def handle_program_completion(self, reason):
         """统一的程序结束处理，包括关机检查"""
         try:
@@ -1218,15 +1316,28 @@ class Behavior(QThread):
         try:
             from datetime import datetime
             now = datetime.now()
-            current_time = now.strftime("%H:%M")
+            current_time = now.time()
+            
+            # 解析工作时间，确保格式正确
+            start_parts = self.work_start_time.split(':')
+            end_parts = self.work_end_time.split(':')
+            
+            # 补齐前导0
+            start_hour = int(start_parts[0])
+            start_minute = int(start_parts[1]) if len(start_parts) > 1 else 0
+            end_hour = int(end_parts[0])
+            end_minute = int(end_parts[1]) if len(end_parts) > 1 else 0
+            
+            start_time = datetime.strptime(f"{start_hour:02d}:{start_minute:02d}", "%H:%M").time()
+            end_time = datetime.strptime(f"{end_hour:02d}:{end_minute:02d}", "%H:%M").time()
             
             # 处理跨日情况
-            if self.work_start_time <= self.work_end_time:
+            if start_time <= end_time:
                 # 同一天内
-                return self.work_start_time <= current_time <= self.work_end_time
+                return start_time <= current_time <= end_time
             else:
                 # 跨日情况
-                return current_time >= self.work_start_time or current_time <= self.work_end_time
+                return current_time >= start_time or current_time <= end_time
                 
         except Exception as e:
             self.send_log(LogLevel.WARNING, f"⚠️ 工作时间检查异常: {e}，默认为工作时间")
@@ -1291,7 +1402,8 @@ class Behavior(QThread):
     def stop_behavior(self):
         """外部停止接口"""
         self._send_log(LogLevel.WARNING, f"🛑 [{self.behavior_name}] 收到外部停止信号")
-        self.master_stop_event.set()
+        # 调用统一的退出函数
+        self.exit_behavior("外部停止", success=True)
     
     def pause_behavior(self):
         """暂停行为"""

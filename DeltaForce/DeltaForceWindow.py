@@ -272,7 +272,7 @@ class DeltaForceWindow(object):
         return (scaled_x, scaled_y)
     
     def ratio_to_screen_coords(self, x_ratio: float, y_ratio: float):
-        """将窗口内的比例坐标转换为实际屏幕坐标（物理坐标）
+        """将窗口内的比例坐标转换为实际屏幕坐标（物理坐标）- 普通方法，不追踪
         
         参数:
             x_ratio: X方向比例 (0.0-1.0)

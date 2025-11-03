@@ -22,6 +22,8 @@ Base模块 - DeltaForce项目基础组件
 from .DeltaProtocol import (
     # 主要协议类
     DeltaProtocol,
+    # 协议格式化器
+    ProtocolFormatter,
 )
 
 from .timer import (
@@ -41,6 +43,7 @@ __author__ = "DeltaForce Team"
 __all__ = [
     # 主要类
     "DeltaProtocol",
+    "ProtocolFormatter",
     "Timer",
     
     # 装饰器

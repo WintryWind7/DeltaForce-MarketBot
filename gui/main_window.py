@@ -621,7 +621,11 @@ class MainWindow(QMainWindow):
             self.config_widgets[behavior['id']] = {}
         
         # 为每个配置参数创建控件
+        processed_params = set()  # 记录已处理的参数
         for param_name, param_config in custom_config.items():
+            # 跳过已处理的参数（如分钟参数会在小时参数处理时一起创建）
+            if param_name in processed_params:
+                continue
             param_type = param_config.get('type', 'int')
             label_text = param_config.get('label', param_name)
             default_value = param_config.get('default', 0)
@@ -632,12 +636,192 @@ class MainWindow(QMainWindow):
                 param_name in self.saved_configs[behavior['id']]):
                 default_value = self.saved_configs[behavior['id']][param_name]
             
+            # 特殊处理：时间参数（小时和分钟组合）
+            if param_name.endswith('_hour'):
+                minute_param_name = param_name.replace('_hour', '_minute')
+                if minute_param_name in custom_config:
+                    # 标记分钟参数已处理
+                    processed_params.add(minute_param_name)
+                    
+                    # 创建时间组合控件
+                    time_label_text = label_text.replace('-时', '')  # 移除"-时"后缀
+                    label = QLabel(f"{time_label_text}:")
+                    label.setStyleSheet("font-weight: bold; color: #2c3e50;")
+                    
+                    # 创建水平布局容纳小时和分钟输入框
+                    time_container = QWidget()
+                    time_layout = QHBoxLayout(time_container)
+                    time_layout.setContentsMargins(0, 0, 0, 0)
+                    time_layout.setSpacing(5)
+                    
+                    # 创建小时输入框
+                    hour_widget = NoWheelSpinBox()
+                    hour_min = param_config.get('min', 0)
+                    hour_max = param_config.get('max', 23)
+                    hour_widget.setMinimum(hour_min)
+                    hour_widget.setMaximum(hour_max)
+                    hour_widget.setValue(int(default_value))
+                    hour_widget.setStyleSheet("""
+                        QSpinBox {
+                            padding: 5px;
+                            border: 1px solid #bdc3c7;
+                            border-radius: 3px;
+                            font-size: 12px;
+                            min-width: 50px;
+                        }
+                        QSpinBox:focus {
+                            border-color: #3498db;
+                        }
+                    """)
+                    
+                    # 创建分钟输入框
+                    minute_config = custom_config[minute_param_name]
+                    minute_default = minute_config.get('default', 0)
+                    if (behavior['id'] in self.saved_configs and 
+                        minute_param_name in self.saved_configs[behavior['id']]):
+                        minute_default = self.saved_configs[behavior['id']][minute_param_name]
+                    
+                    minute_widget = NoWheelSpinBox()
+                    minute_min = minute_config.get('min', 0)
+                    minute_max = minute_config.get('max', 59)
+                    minute_widget.setMinimum(minute_min)
+                    minute_widget.setMaximum(minute_max)
+                    minute_widget.setValue(int(minute_default))
+                    minute_widget.setStyleSheet("""
+                        QSpinBox {
+                            padding: 5px;
+                            border: 1px solid #bdc3c7;
+                            border-radius: 3px;
+                            font-size: 12px;
+                            min-width: 50px;
+                        }
+                        QSpinBox:focus {
+                            border-color: #3498db;
+                        }
+                    """)
+                    
+                    # 添加到布局
+                    time_layout.addWidget(hour_widget)
+                    time_layout.addWidget(QLabel(":"))
+                    time_layout.addWidget(minute_widget)
+                    time_layout.addStretch()
+                    
+                    # 存储控件引用
+                    self.config_widgets[behavior['id']][param_name] = hour_widget
+                    self.config_widgets[behavior['id']][minute_param_name] = minute_widget
+                    
+                    # 连接信号
+                    hour_widget.valueChanged.connect(self.on_config_changed)
+                    minute_widget.valueChanged.connect(self.on_config_changed)
+                    
+                    # 特殊处理：24小时自动转为23:59
+                    def handle_hour_change(value, h_widget=hour_widget, m_widget=minute_widget):
+                        if value == 24:
+                            h_widget.setValue(23)
+                            m_widget.setValue(59)
+                    hour_widget.valueChanged.connect(handle_hour_change)
+                    
+                    # 添加到表单
+                    form_layout.addRow(label, time_container)
+                    continue  # 跳过后续的普通控件创建逻辑
+            
             # 创建标签
             label = QLabel(f"{label_text}:")
             label.setStyleSheet("font-weight: bold; color: #2c3e50;")
             
             # 根据类型创建对应的控件
-            if param_type == 'int':
+            if param_type == 'int' and param_name == 'debug_mode':
+                # 特殊处理：debug_mode 使用循环按钮（0→1→2→0）
+                widget = QPushButton()
+                # 设置初始值
+                try:
+                    int_value = int(default_value) if default_value is not None else param_config.get('default', 0)
+                    # 确保值在有效范围内
+                    int_value = max(0, min(2, int_value))
+                except (ValueError, TypeError):
+                    int_value = 0
+                
+                # 存储当前值（使用对象属性）
+                widget.current_value = int_value
+                
+                # 更新按钮文本和样式
+                def make_update_debug_button_style(btn):
+                    def update_style(value):
+                        if value == 0:
+                            btn.setText("✗ 关闭")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #95a5a6;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #7f8c8d;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #707b7c;
+                                }
+                            """)
+                        elif value == 1:
+                            btn.setText("🔍 简化Debug")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #3498db;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #2980b9;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #21618c;
+                                }
+                            """)
+                        elif value == 2:
+                            btn.setText("🔬 详细Debug")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #9b59b6;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #8e44ad;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #7d3c98;
+                                }
+                            """)
+                    return update_style
+                
+                # 点击时循环切换值
+                def make_toggle_debug_mode(btn, update_func):
+                    def toggle():
+                        # 循环：0→1→2→0
+                        btn.current_value = (btn.current_value + 1) % 3
+                        update_func(btn.current_value)
+                        # 触发配置变化信号
+                        self.on_config_changed()
+                    return toggle
+                
+                # 连接信号
+                update_func = make_update_debug_button_style(widget)
+                widget.clicked.connect(make_toggle_debug_mode(widget, update_func))
+                # 初始化样式
+                update_func(int_value)
+            elif param_type == 'int':
                 widget = NoWheelSpinBox()
                 # 取消数值范围限制，允许用户自由输入
                 widget.setMinimum(-2147483648)  # 32位整数最小值
@@ -711,57 +895,62 @@ class MainWindow(QMainWindow):
                 widget.setCheckable(True)  # 设置为可切换按钮
                 widget.setChecked(bool_value)
                 
-                # 更新按钮文本和样式
-                def update_button_style(checked):
-                    if checked:
-                        widget.setText("✓ 已启用")
-                        widget.setStyleSheet("""
-                            QPushButton {
-                                background-color: #27ae60;
-                                color: white;
-                                border: none;
-                                padding: 8px 16px;
-                                border-radius: 4px;
-                                font-size: 12px;
-                                font-weight: bold;
-                            }
-                            QPushButton:hover {
-                                background-color: #229954;
-                            }
-                            QPushButton:pressed {
-                                background-color: #1e8449;
-                            }
-                        """)
-                    else:
-                        widget.setText("✗ 已禁用")
-                        widget.setStyleSheet("""
-                            QPushButton {
-                                background-color: #e74c3c;
-                                color: white;
-                                border: none;
-                                padding: 8px 16px;
-                                border-radius: 4px;
-                                font-size: 12px;
-                                font-weight: bold;
-                            }
-                            QPushButton:hover {
-                                background-color: #c0392b;
-                            }
-                            QPushButton:pressed {
-                                background-color: #a93226;
-                            }
-                        """)
+                # 更新按钮文本和样式（使用lambda捕获当前widget）
+                def make_update_button_style(btn):
+                    def update_style(checked):
+                        if checked:
+                            btn.setText("✓ 已启用")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #27ae60;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #229954;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #1e8449;
+                                }
+                            """)
+                        else:
+                            btn.setText("✗ 已禁用")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #e74c3c;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #c0392b;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #a93226;
+                                }
+                            """)
+                    return update_style
                 
                 # 连接信号
-                widget.toggled.connect(update_button_style)
+                update_func = make_update_button_style(widget)
+                widget.toggled.connect(update_func)
                 # 初始化样式
-                update_button_style(bool_value)
+                update_func(bool_value)
             else:
                 # 默认使用整数控件
                 widget = NoWheelSpinBox()
-                # 取消数值范围限制，允许用户自由输入
-                widget.setMinimum(-2147483648)  # 32位整数最小值
-                widget.setMaximum(2147483647)   # 32位整数最大值
+                # 设置数值范围（如果配置中有指定）
+                min_value = param_config.get('min', -2147483648)
+                max_value = param_config.get('max', 2147483647)
+                widget.setMinimum(min_value)
+                widget.setMaximum(max_value)
                 # 确保default_value是整数类型
                 try:
                     int_value = int(default_value)
@@ -817,8 +1006,12 @@ class MainWindow(QMainWindow):
                     config[param_name] = widget.value()
                 elif isinstance(widget, QLineEdit):
                     config[param_name] = widget.text()
-                elif isinstance(widget, QPushButton) and widget.isCheckable():
-                    config[param_name] = widget.isChecked()
+                elif isinstance(widget, QPushButton):
+                    if widget.isCheckable():
+                        config[param_name] = widget.isChecked()
+                    elif hasattr(widget, 'current_value'):
+                        # debug_mode 循环按钮
+                        config[param_name] = widget.current_value
         
         return config
     
@@ -859,8 +1052,12 @@ class MainWindow(QMainWindow):
                         behavior_config[param_name] = widget.value()
                     elif isinstance(widget, QLineEdit):
                         behavior_config[param_name] = widget.text()
-                    elif isinstance(widget, QPushButton) and widget.isCheckable():
-                        behavior_config[param_name] = widget.isChecked()
+                    elif isinstance(widget, QPushButton):
+                        if widget.isCheckable():
+                            behavior_config[param_name] = widget.isChecked()
+                        elif hasattr(widget, 'current_value'):
+                            # debug_mode 循环按钮
+                            behavior_config[param_name] = widget.current_value
                 
                 if behavior_config:  # 只保存非空配置
                     existing_configs[behavior_id] = behavior_config
@@ -902,11 +1099,71 @@ class MainWindow(QMainWindow):
                             str_value = str(saved_value)
                             widget.setText(str_value)
                             applied_count += 1
-                        elif isinstance(widget, QPushButton) and widget.isCheckable():
-                            # 布尔按钮控件需要转换为bool
-                            bool_value = bool(saved_value)
-                            widget.setChecked(bool_value)
-                            applied_count += 1
+                        elif isinstance(widget, QPushButton):
+                            if widget.isCheckable():
+                                # 布尔按钮控件需要转换为bool
+                                # 正确处理字符串 "True"/"False" 和布尔值
+                                if isinstance(saved_value, bool):
+                                    bool_value = saved_value
+                                elif isinstance(saved_value, str):
+                                    bool_value = saved_value.lower() in ('true', '1', 'yes')
+                                else:
+                                    bool_value = bool(saved_value)
+                                widget.setChecked(bool_value)
+                                applied_count += 1
+                            elif hasattr(widget, 'current_value'):
+                                # debug_mode 循环按钮（0→1→2→0）
+                                int_value = int(saved_value)
+                                int_value = max(0, min(2, int_value))  # 确保在 0-2 范围内
+                                widget.current_value = int_value
+                                # 查找更新函数并调用
+                                # 需要触发样式更新
+                                if int_value == 0:
+                                    widget.setText("✗ 关闭")
+                                    widget.setStyleSheet("""
+                                        QPushButton {
+                                            background-color: #95a5a6;
+                                            color: white;
+                                            border: none;
+                                            padding: 8px 16px;
+                                            border-radius: 4px;
+                                            font-size: 12px;
+                                            font-weight: bold;
+                                        }
+                                        QPushButton:hover { background-color: #7f8c8d; }
+                                        QPushButton:pressed { background-color: #707b7c; }
+                                    """)
+                                elif int_value == 1:
+                                    widget.setText("🔍 简化Debug")
+                                    widget.setStyleSheet("""
+                                        QPushButton {
+                                            background-color: #3498db;
+                                            color: white;
+                                            border: none;
+                                            padding: 8px 16px;
+                                            border-radius: 4px;
+                                            font-size: 12px;
+                                            font-weight: bold;
+                                        }
+                                        QPushButton:hover { background-color: #2980b9; }
+                                        QPushButton:pressed { background-color: #21618c; }
+                                    """)
+                                elif int_value == 2:
+                                    widget.setText("🔬 详细Debug")
+                                    widget.setStyleSheet("""
+                                        QPushButton {
+                                            background-color: #9b59b6;
+                                            color: white;
+                                            border: none;
+                                            padding: 8px 16px;
+                                            border-radius: 4px;
+                                            font-size: 12px;
+                                            font-weight: bold;
+                                        }
+                                        QPushButton:hover { background-color: #8e44ad; }
+                                        QPushButton:pressed { background-color: #7d3c98; }
+                                    """)
+                                applied_count += 1
                     except (ValueError, TypeError, Exception) as e:
                         print(f"⚠️ 应用配置 {param_name}={saved_value} 失败: {e}")
             

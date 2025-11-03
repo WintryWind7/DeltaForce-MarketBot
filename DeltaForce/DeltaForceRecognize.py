@@ -11,9 +11,15 @@ import cv2
 import os
 import sys
 
+# Win32 API 导入（用于高性能截图）
+import win32gui
+import win32ui
+import win32con
+from PIL import Image
+
 # 导入协议装饰器
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'base'))
-from decorators import protocol_handler
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from base.decorators import protocol_handler
 
 
 class DeltaForceRecognize(DeltaForceWindow):
@@ -83,6 +89,163 @@ class DeltaForceRecognize(DeltaForceWindow):
         }
         
         return bool(result)
+    
+    @protocol_handler()
+    def _capture_screenshot_pyautogui(self, protocol, left: int, top: int, width: int, height: int) -> bool:
+        """
+        使用 pyautogui 截取屏幕区域（底层函数，用于性能追踪 - 纯截图耗时）
+        
+        Args:
+            left: 左上角X坐标
+            top: 左上角Y坐标
+            width: 截图宽度
+            height: 截图高度
+        
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
+        import pyautogui
+        import numpy as np
+        
+        # 使用pyautogui截图
+        screenshot = pyautogui.screenshot(region=(left, top, width, height))
+        
+        # 转换为numpy数组
+        screenshot_array = np.array(screenshot)
+        
+        # 存储到protocol
+        protocol.screenshot = screenshot
+        protocol.screenshot_array = screenshot_array
+        protocol.is_base_function = True  # 标记为底层函数
+        
+        return True
+    
+    @protocol_handler()
+    def _capture_screenshot_win32api(self, protocol, left: int, top: int, width: int, height: int) -> bool:
+        """
+        使用 Win32 API 截取屏幕区域（底层函数，用于性能追踪 - 纯截图耗时）
+        
+        Args:
+            left: 左上角X坐标
+            top: 左上角Y坐标
+            width: 截图宽度
+            height: 截图高度
+        
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
+        import numpy as np
+        
+        # 使用 Win32 API 截图
+        hdesktop = win32gui.GetDesktopWindow()
+        desktop_dc = win32gui.GetWindowDC(hdesktop)
+        img_dc = win32ui.CreateDCFromHandle(desktop_dc)
+        mem_dc = img_dc.CreateCompatibleDC()
+        
+        screenshot_bmp = win32ui.CreateBitmap()
+        screenshot_bmp.CreateCompatibleBitmap(img_dc, width, height)
+        mem_dc.SelectObject(screenshot_bmp)
+        
+        mem_dc.BitBlt((0, 0), (width, height), img_dc, (left, top), win32con.SRCCOPY)
+        
+        bmpinfo = screenshot_bmp.GetInfo()
+        bmpstr = screenshot_bmp.GetBitmapBits(True)
+        
+        screenshot = Image.frombuffer(
+            'RGB',
+            (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
+            bmpstr, 'raw', 'BGRX', 0, 1
+        )
+        
+        mem_dc.DeleteDC()
+        win32gui.DeleteObject(screenshot_bmp.GetHandle())
+        win32gui.ReleaseDC(hdesktop, desktop_dc)
+        
+        # 转换为numpy数组
+        screenshot_array = np.array(screenshot)
+        
+        # 存储到protocol
+        protocol.screenshot = screenshot
+        protocol.screenshot_array = screenshot_array
+        protocol.is_base_function = True  # 标记为底层函数
+        
+        return True
+    
+    @protocol_handler()
+    def screenshot_region(self, protocol, left: int, top: int, width: int, height: int) -> bool:
+        """
+        截取指定区域的屏幕截图（调用底层截图函数）
+        
+        Args:
+            left: 左上角X坐标
+            top: 左上角Y坐标
+            width: 截图宽度
+            height: 截图高度
+        
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
+        # 调用底层截图函数（使用 Win32 API）
+        capture_result = self._capture_screenshot_win32api(left, top, width, height)
+        if not capture_result.success:
+            protocol.error_message = "截图失败"
+            return False
+        
+        # 合并结果到当前protocol
+        protocol.screenshot = capture_result.screenshot
+        protocol.screenshot_array = capture_result.screenshot_array
+        protocol.region = {'left': left, 'top': top, 'width': width, 'height': height}
+        
+        return True
+    
+    @protocol_handler()
+    def ocr_readtext(self, protocol, image_array, allowlist: str = '1234567890', 
+                    width_ths: float = 0.7, height_ths: float = 0.7, 
+                    text_threshold: float = 0.5, decoder: str = 'greedy') -> bool:
+        """
+        使用EasyOCR识别图像中的文字（底层函数，用于追踪）
+        
+        Args:
+            image_array: 图像的numpy数组
+            allowlist: 允许识别的字符列表，默认 '1234567890' 只识别数字
+            width_ths: 文本框宽度阈值，默认 0.7
+            height_ths: 文本框高度阈值，默认 0.7
+            text_threshold: 文本置信度阈值，默认 0.5
+            decoder: 解码器类型，默认 'greedy'（贪婪解码器，速度快）
+        
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
+        # 调用OCR引擎的readtext方法
+        if allowlist:
+            results = self.ocr.reader.readtext(
+                image_array,
+                allowlist=allowlist,
+                width_ths=width_ths,
+                height_ths=height_ths,
+                text_threshold=text_threshold,
+                decoder=decoder
+            )
+        else:
+            results = self.ocr.reader.readtext(
+                image_array,
+                width_ths=width_ths,
+                height_ths=height_ths,
+                text_threshold=text_threshold,
+                decoder=decoder
+            )
+        
+        # 存储识别结果到protocol
+        protocol.ocr_results = results
+        protocol.ocr_params = {
+            'allowlist': allowlist,
+            'width_ths': width_ths,
+            'height_ths': height_ths,
+            'text_threshold': text_threshold,
+            'decoder': decoder
+        }
+        
+        return True
 
 
 class OCR:
@@ -182,231 +345,12 @@ class OCR:
             if height > 7:  # 确保图像足够高
                 image = image[3:height-4, :]  # 裁剪上方3像素，下方4像素
             
-            # 直接返回裁剪后的图像，不进行其他预处理
+            # 直接返回裁剪后的图像
             return image
-            
-            # 以下为注释掉的原始预处理逻辑
-            """
-            # 定义RGB绿色范围
-            lower_green = np.array([15, 50, 60])  # R, G, B
-            upper_green = np.array([33, 255, 130])  # R, G, B
-            
-            # 创建绿色区域的掩码
-            green_mask = cv2.inRange(image, lower_green, upper_green)
-            
-            # 创建输出图像（白色背景）
-            result = np.ones_like(image) * 255
-            
-            # 将绿色区域设置为黑色（字体）
-            result[green_mask > 0] = [0, 0, 0]
-            
-            # 转换为灰度图进行轮廓分析
-            gray = cv2.cvtColor(result, cv2.COLOR_RGB2GRAY)
-            
-            # 反转图像：让文字变成白色，背景变成黑色（便于轮廓检测）
-            gray_inv = cv2.bitwise_not(gray)
-            
-            # 使用形态学操作分离斜向连接的小形状
-            # 创建一个小的十字形核，只保留水平和垂直连接
-            kernel = np.array([[0, 1, 0],
-                              [1, 1, 1], 
-                              [0, 1, 0]], dtype=np.uint8)
-            
-            # 先腐蚀再膨胀，分离斜向连接
-            gray_separated = cv2.erode(gray_inv, kernel, iterations=1)
-            gray_separated = cv2.dilate(gray_separated, kernel, iterations=1)
-            
-            # 查找轮廓
-            contours, _ = cv2.findContours(gray_separated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            # 在原图上去除逗号等小形状（保持原数字不变）
-            result_processed = result.copy()
-            
-            # 分析轮廓，识别逗号和处理0/8字符
-            comma_columns = set()  # 记录包含逗号的列
-            
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                x, y, w, h = cv2.boundingRect(contour)
-                
-                # 检查是否为过宽的轮廓（可能是多个字符连接）
-                if w > 12:  # 单个字符宽度不应超过12像素
-                    self._split_wide_contour(result_processed, x, y, w, h)
-                    continue
-                
-                # 识别逗号特征：原有条件基础上增加4个像素点面积判定
-                if (area <= 14 or h <= 4 or w <= 3):
-                    # 先简单删除所有小形状，观察效果
-                    # 记录包含逗号的列范围
-                    for col in range(x, x + w):
-                        comma_columns.add(col)
-                    
-                    # 用白色填充逗号区域
-                    cv2.fillPoly(result_processed, [contour], (255, 255, 255))
-                    continue
-                
-                # 识别其他小形状并去除（不在逗号列删除范围内的）
-                elif (area <= 10 or h <= 4 or w <= 3):
-                    cv2.fillPoly(result_processed, [contour], (255, 255, 255))
-            
-            # 如果检测到逗号，删除包含逗号的列并左右合并
-            if comma_columns:
-                height, width = result_processed.shape[:2]
-                
-                # 创建新图像，排除逗号列
-                valid_columns = [col for col in range(width) if col not in comma_columns]
-                
-                if valid_columns:
-                    # 提取有效列进行左右合并
-                    if len(result_processed.shape) == 3:  # RGB图像
-                        result_merged = result_processed[:, valid_columns, :]
-                    else:  # 灰度图像
-                        result_merged = result_processed[:, valid_columns]
-                    
-                    return result_merged
-            
-            return result_processed
-            """
             
         except Exception as e:
             print(f"配装预处理失败: {e}")
             return image
-    
-    @protocol_handler()
-    def _split_wide_contour(self, protocol, image, x, y, w, h) -> bool:
-        """
-        分割过宽的轮廓，找到最细的一列并涂成白色进行分割
-        
-        Args:
-            image: 要处理的图像
-            x, y, w, h: 轮廓的边界框
-        """
-        try:
-            # 提取轮廓区域
-            roi = image[y:y+h, x:x+w]
-            
-            # 转换为灰度图进行分析
-            if len(roi.shape) == 3:
-                gray_roi = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
-            else:
-                gray_roi = roi
-            
-            # 二值化：黑色字符为255，白色背景为0
-            binary_roi = (gray_roi < 128).astype(np.uint8) * 255
-            
-            # 计算每列的像素密度（黑色像素数量）
-            column_densities = []
-            for col in range(w):
-                density = np.sum(binary_roi[:, col] > 0)
-                column_densities.append(density)
-            
-            # 找到密度最小的列（最细的连接处）
-            # 排除边界列，避免切掉字符边缘
-            if w > 4:  # 确保有足够的列可以选择
-                search_start = max(1, w // 4)      # 从1/4处开始搜索
-                search_end = min(w - 1, 3 * w // 4) # 到3/4处结束搜索
-                
-                min_density = float('inf')
-                split_col = -1
-                
-                for col in range(search_start, search_end):
-                    if column_densities[col] < min_density and column_densities[col] > 0:
-                        min_density = column_densities[col]
-                        split_col = col
-                
-                # 如果找到了合适的分割列，将其涂成白色
-                if split_col != -1:
-                    actual_col = x + split_col
-                    if actual_col < image.shape[1]:
-                        # 将整列涂成白色
-                        for row in range(y, y + h):
-                            if row < image.shape[0]:
-                                image[row, actual_col] = [255, 255, 255]
-            
-        except Exception as e:
-            pass  # 分割失败时继续处理
-    
-    @protocol_handler()
-    def _is_independent_comma(self, protocol, comma_contour, all_contours, cx, cy, cw, ch) -> bool:
-        """
-        检测小形状是否为独立的逗号（不与其他字符水平或垂直相连，斜向相连不算相连）
-        
-        Args:
-            comma_contour: 候选逗号轮廓
-            all_contours: 所有轮廓
-            cx, cy, cw, ch: 候选逗号的边界框
-            
-        Returns:
-            bool: 是否为独立逗号
-        """
-        try:
-            # 扩展检测范围（检测水平或垂直连接）
-            expand_margin = max(cw, ch) + 2  # 扩展边界
-            
-            # 检查附近是否有大的轮廓（字符）
-            for other_contour in all_contours:
-                if np.array_equal(comma_contour, other_contour):
-                    continue
-                
-                # 获取其他轮廓的边界框
-                ox, oy, ow, oh = cv2.boundingRect(other_contour)
-                other_area = cv2.contourArea(other_contour)
-                
-                # 忽略同样小的形状
-                if other_area <= 14 or oh <= 4 or ow <= 3:
-                    continue
-                
-                # 检查是否水平或垂直相连（斜向相连不算）
-                if self._is_near_or_connected(cx, cy, cw, ch, ox, oy, ow, oh, expand_margin):
-                    # 如果与大轮廓水平或垂直相连，则不是独立逗号
-                    return False
-            
-            # 暂时禁用位置检查，因为我们无法准确获取图像高度
-            # 后续可以通过传入图像尺寸来改进
-            # if cy < image_height * 0.6:  # 逗号在上60%区域，可能是字符部分
-            #     return False
-            
-            return True  # 是独立逗号
-            
-        except Exception as e:
-            return True  # 出错时默认处理为逗号
-    
-    @protocol_handler()
-    def _is_near_or_connected(self, protocol, x1, y1, w1, h1, x2, y2, w2, h2, margin) -> bool:
-        """
-        检查两个矩形是否相连（只考虑水平或垂直相连，斜向相连不算）
-        
-        Args:
-            x1, y1, w1, h1: 第一个矩形
-            x2, y2, w2, h2: 第二个矩形
-            margin: 扩展边界
-            
-        Returns:
-            bool: 是否水平或垂直相连
-        """
-        x1_end = x1 + w1
-        y1_end = y1 + h1
-        x2_end = x2 + w2
-        y2_end = y2 + h2
-        
-        # 检查水平相连（左右相邻）
-        horizontal_connected = (
-            # 垂直方向有重叠
-            not (y2_end < y1 or y2 > y1_end) and
-            # 水平方向相邻（在margin范围内）
-            (abs(x1_end - x2) <= margin or abs(x2_end - x1) <= margin)
-        )
-        
-        # 检查垂直相连（上下相邻）
-        vertical_connected = (
-            # 水平方向有重叠
-            not (x2_end < x1 or x2 > x1_end) and
-            # 垂直方向相邻（在margin范围内）
-            (abs(y1_end - y2) <= margin or abs(y2_end - y1) <= margin)
-        )
-        
-        # 只有水平或垂直相连才算相连，斜向相连不算
-        return horizontal_connected or vertical_connected
     
     @protocol_handler()
     def _postprocess_peizhuang_text(self, protocol, text: str, allow_list: str = None) -> bool:
@@ -487,42 +431,6 @@ class OCR:
             return []
     
     @protocol_handler()
-    def _recognize_text_debug(self, protocol, image: Union[np.ndarray, Image.Image, str]) -> bool:
-        """
-        识别图片中的文字（调试模式），返回完整结果
-        
-        Args:
-            image: 图片，可以是numpy数组、PIL Image对象或图片路径
-            
-        Returns:
-            List[Tuple]: 识别结果列表，每个元素包含(bbox, text, confidence)
-        """
-        try:
-            # 如果输入是PIL Image，转换为numpy数组
-            if isinstance(image, Image.Image):
-                image = np.array(image)
-            
-            # 如果输入是字符串路径，读取图片
-            elif isinstance(image, str):
-                image = cv2.imread(image)
-                if image is None:
-                    raise ValueError("无法读取图片文件")
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            
-            # 确保图片是numpy数组
-            if not isinstance(image, np.ndarray):
-                raise ValueError("不支持的图片格式")
-            
-            # 使用easyocr进行识别
-            results = self.reader.readtext(image)
-            
-            return results
-            
-        except Exception as e:
-            print(f"文字识别失败: {e}")
-            return []
-    
-    @protocol_handler()
     def recognize(self, protocol, top_left: Tuple[int, int], bottom_right: Tuple[int, int], save: bool = False, allow_list: str = None, return_image: bool = False, preprocess_type: str = None, debug: bool = False) -> bool:
         """
         从指定坐标截图并识别文字
@@ -567,28 +475,6 @@ class OCR:
         if return_image:
             protocol.processed_image = processed_pil
         return True
-    
-    @protocol_handler()
-    def debug(self, protocol, top_left: Tuple[int, int], bottom_right: Tuple[int, int]) -> bool:
-        """
-        调试模式：从指定坐标截图并返回详细的识别结果
-        
-        Args:
-            top_left: 左上角坐标 (x, y)
-            bottom_right: 右下角坐标 (x, y)
-            
-        Returns:
-            List[Tuple]: 详细识别结果列表，每个元素包含(bbox, text, confidence)
-        """
-        # 先截图
-        screenshot = self._screenshot(top_left, bottom_right)
-        
-        if screenshot is None:
-            return []
-        
-        # 再识别文字（调试模式）
-        return self._recognize_text_debug(screenshot)
-    
 
 
 def test_recognize():

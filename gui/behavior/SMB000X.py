@@ -5,24 +5,13 @@
 代码ID: SMB000X (Single Market Bot)
 """
 
-try:
-    from .Behavior import Behavior, LogLevel
-except ImportError:
-    # 如果相对导入失败，尝试绝对导入
-    import sys
-    import os
-    sys.path.append(os.path.dirname(__file__))
-    from Behavior import Behavior, LogLevel
+import sys
+import os
+sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-# 导入协议装饰器
-try:
-    from base.decorators import protocol_handler
-except ImportError:
-    import sys
-    import os
-    base_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'base')
-    sys.path.insert(0, base_dir)
-    from decorators import protocol_handler
+from Behavior import Behavior, LogLevel
+from base.decorators import protocol_handler
 
 import time
 import csv
@@ -90,17 +79,37 @@ BEHAVIOR_INFO = {
             "max": 999,
             "description": "单次批量购买的最大数量限制"
         },
-        "work_start_time": {
-            "type": "str",
-            "label": "工作开始时间",
-            "default": "00:00",
-            "description": "每日工作开始时间 (HH:MM格式)"
+        "work_start_hour": {
+            "type": "int",
+            "label": "工作开始时间-时",
+            "default": 0,
+            "min": 0,
+            "max": 24,
+            "description": "工作开始时间的小时部分 (0-24，24会自动转为23:59)"
         },
-        "work_end_time": {
-            "type": "str",
-            "label": "工作结束时间",
-            "default": "05:15",
-            "description": "每日工作结束时间 (HH:MM格式)"
+        "work_start_minute": {
+            "type": "int",
+            "label": "工作开始时间-分",
+            "default": 0,
+            "min": 0,
+            "max": 59,
+            "description": "工作开始时间的分钟部分 (0-59)"
+        },
+        "work_end_hour": {
+            "type": "int",
+            "label": "工作结束时间-时",
+            "default": 5,
+            "min": 0,
+            "max": 24,
+            "description": "工作结束时间的小时部分 (0-24，24会自动转为23:59)"
+        },
+        "work_end_minute": {
+            "type": "int",
+            "label": "工作结束时间-分",
+            "default": 15,
+            "min": 0,
+            "max": 59,
+            "description": "工作结束时间的分钟部分 (0-59)"
         },
         "auto_shutdown": {
             "type": "bool",
@@ -109,10 +118,12 @@ BEHAVIOR_INFO = {
             "description": "工作完成后是否自动关机"
         },
         "debug_mode": {
-            "type": "bool",
+            "type": "int",
             "label": "调试模式",
-            "default": False,
-            "description": "开启后只显示debug_log的日志，过滤普通日志输出"
+            "default": 0,
+            "min": 0,
+            "max": 2,
+            "description": "0=关闭, 1=简化debug(隐藏底层函数), 2=详细debug(显示所有函数)"
         }
     }
 }
@@ -166,17 +177,37 @@ class PurchaseRefreshBehavior(Behavior):
                 'default': 200,
                 'description': '单次批量购买的最大数量限制'
             },
-            'work_start_time': {
-                'type': 'str',
-                'label': '工作开始时间',
-                'default': '00:00',
-                'description': '每日工作开始时间 (HH:MM格式)'
+            'work_start_hour': {
+                'type': 'int',
+                'label': '工作开始时间-时',
+                'default': 0,
+                'min': 0,
+                'max': 24,
+                'description': '工作开始时间的小时部分 (0-24，24会自动转为23:59)'
             },
-            'work_end_time': {
-                'type': 'str',
-                'label': '工作结束时间',
-                'default': '05:15',
-                'description': '每日工作结束时间 (HH:MM格式)'
+            'work_start_minute': {
+                'type': 'int',
+                'label': '工作开始时间-分',
+                'default': 0,
+                'min': 0,
+                'max': 59,
+                'description': '工作开始时间的分钟部分 (0-59)'
+            },
+            'work_end_hour': {
+                'type': 'int',
+                'label': '工作结束时间-时',
+                'default': 5,
+                'min': 0,
+                'max': 24,
+                'description': '工作结束时间的小时部分 (0-24，24会自动转为23:59)'
+            },
+            'work_end_minute': {
+                'type': 'int',
+                'label': '工作结束时间-分',
+                'default': 15,
+                'min': 0,
+                'max': 59,
+                'description': '工作结束时间的分钟部分 (0-59)'
             },
             'auto_shutdown': {
                 'type': 'bool',
@@ -185,10 +216,12 @@ class PurchaseRefreshBehavior(Behavior):
                 'description': '工作完成后是否自动关机'
             },
             'debug_mode': {
-                'type': 'bool',
+                'type': 'int',
                 'label': '调试模式',
-                'default': False,
-                'description': '开启后只显示debug_log的日志，过滤普通日志输出'
+                'default': 0,
+                'min': 0,
+                'max': 2,
+                'description': '0=关闭, 1=简化debug(隐藏底层函数), 2=详细debug(显示所有函数)'
             }
         }
     
@@ -197,15 +230,30 @@ class PurchaseRefreshBehavior(Behavior):
         # 基类会自动调用args()并设置所有参数为实例属性
         super().init_config()
         
+        # 处理24小时的特殊情况
+        if self.work_start_hour == 24:
+            self.work_start_hour = 23
+            self.work_start_minute = 59
+        if self.work_end_hour == 24:
+            self.work_end_hour = 23
+            self.work_end_minute = 59
+        
+        # 构建工作时间字符串（用于显示和内部使用）
+        self.work_start_time = f"{self.work_start_hour:02d}:{self.work_start_minute:02d}"
+        self.work_end_time = f"{self.work_end_hour:02d}:{self.work_end_minute:02d}"
+        
         # 发送配置信息
         self.send_log(LogLevel.INFO, f"📋 配置: 目标价格≤{self.target_price}, 刷新{self.refresh_quantity}发, 购买{self.purchase_quantity}发×{self.click_times}次, 工作时间{self.work_start_time}-{self.work_end_time}")
         
         # 调试模式信息
-        if self.debug_mode:
-            self.debug_log(LogLevel.INFO, f"🔍 调试模式已开启，只显示debug_log日志")
-            self.debug_log(LogLevel.INFO, f"🔧 配置参数: target_price={self.target_price}, refresh_quantity={self.refresh_quantity}, purchase_quantity={self.purchase_quantity}")
-        else:
+        if self.debug_mode == 0:
             self.send_log(LogLevel.INFO, "📝 普通模式，显示所有日志")
+        elif self.debug_mode == 1:
+            self.debug_log(LogLevel.INFO, f"🔍 简化调试模式已开启（隐藏底层函数）")
+            self.debug_log(LogLevel.INFO, f"🔧 配置参数: target_price={self.target_price}, refresh_quantity={self.refresh_quantity}, purchase_quantity={self.purchase_quantity}")
+        elif self.debug_mode == 2:
+            self.debug_log(LogLevel.INFO, f"🔍 详细调试模式已开启（显示所有函数）")
+            self.debug_log(LogLevel.INFO, f"🔧 配置参数: target_price={self.target_price}, refresh_quantity={self.refresh_quantity}, purchase_quantity={self.purchase_quantity}")
     
     def init_behavior(self):
         """初始化行为特定逻辑"""
@@ -246,17 +294,12 @@ class PurchaseRefreshBehavior(Behavior):
     def main_logic(self):
         """主业务逻辑"""
         try:
-            if not self.is_delta_ready():
-                self.send_log(LogLevel.ERROR, "❌ Delta实例未就绪，程序退出")
-                return False
-            
             self.system_log(LogLevel.SUCCESS, "🚀 SMB000X开始执行")
             self.system_log(LogLevel.INFO, "📋 执行流程: 初始化 → 刷新阶段 → 购买阶段")
             
             # 初始化余额
             if not self.initialize_balance():
-                self.send_log(LogLevel.ERROR, "❌ 余额初始化失败，程序退出")
-                return False
+                return self.exit_behavior("余额初始化失败", success=False)
             
             # 主循环
             while not self.is_stopped():
@@ -268,12 +311,7 @@ class PurchaseRefreshBehavior(Behavior):
                 
                 # 检查关机时间窗口
                 if self.is_in_shutdown_window() and self.auto_shutdown:
-                    self.send_log(LogLevel.INFO, "🔌 检测到关机时间窗口，程序结束")
-                    # 生成最终报告
-                    self.generate_final_report()
-                    # 统一的结束处理
-                    self.handle_program_completion("到达关机时间")
-                    return True
+                    return self.exit_behavior("到达关机时间", success=True)
                 
                 # 执行一轮刷新购买流程
                 cycle_result = self.execute_refresh_purchase_cycle()
@@ -288,32 +326,18 @@ class PurchaseRefreshBehavior(Behavior):
                 
                 # 检查余额变化 - 连续20次余额不变则退出
                 if not self.monitor_balance_change():
-                    self.send_log(LogLevel.INFO, "🏪 余额连续未变化，可能仓库已满")
-                    # 生成最终报告
-                    self.generate_final_report()
-                    # 统一的结束处理
-                    self.handle_program_completion("余额未变化")
-                    return True  # 直接返回，避免重复处理
+                    return self.exit_behavior("余额未变化", success=True)
                 
                 # 等待下次循环
                 self.segmented_sleep(self.refresh_delay)
             
-            # 正常结束循环后的处理
-            # 生成最终报告
-            self.generate_final_report()
-            
-            # 统一的结束处理（检查关机）
-            # 检查是否是用户手动停止
-            if self.is_stopped():
-                self.handle_program_completion("用户退出")
-            else:
-                self.handle_program_completion("正常完成")
-            
-            return True
+            # 正常结束循环后的处理（用户手动停止或正常完成）
+            reason = "用户退出" if self.is_stopped() else "正常完成"
+            return self.exit_behavior(reason, success=True)
             
         except Exception as e:
             self.send_log(LogLevel.ERROR, f"❌ 主逻辑执行异常: {e}")
-            return False
+            return self.exit_behavior(f"异常: {e}", success=False)
     
     @protocol_handler()
     def execute_refresh_purchase_cycle(self, protocol):
@@ -324,7 +348,7 @@ class PurchaseRefreshBehavior(Behavior):
             # 刷新阶段
             self.current_phase = "刷新阶段"
             refresh_result = self.refresh_phase()
-            protocol <<= refresh_result
+            # 自动合并（self 的方法会自动合并到 protocol）
             
             # 检查刷新是否成功
             if not refresh_result or not refresh_result.success:
@@ -341,60 +365,33 @@ class PurchaseRefreshBehavior(Behavior):
                 # 价格合理，进入购买阶段
                 self.current_phase = "购买阶段"
                 purchase_result = self.purchase_phase(unit_price)
-                protocol <<= purchase_result
+                # 自动合并（self 的方法会自动合并到 protocol）
                 purchase_success = purchase_result.success if purchase_result else False
                 
-                # 打印完整的调用链（从刷新到购买完成）
-                if hasattr(protocol, 'timing_records') and protocol.timing_records:
-                    self.debug_log(LogLevel.INFO, f"📊 第{self.refresh_count}次完整流程调用链 (刷新→购买，单价: {unit_price:.1f}):")
-                    total_time = 0
-                    for i, record in enumerate(protocol.timing_records, 1):
-                        # 兼容新旧格式：新格式4元素，旧格式3元素
-                        if len(record) == 4:
-                            func_name, runtime, sleep_time, is_base = record
-                        else:
-                            func_name, runtime, is_base = record
-                            sleep_time = 0.0
-                        
-                        total_time += runtime
-                        runtime_ms = runtime * 1000  # 转换为毫秒
-                        sleep_ms = sleep_time * 1000  # 转换为毫秒
-                        
-                        # 只要sleep_ms > 0就显示，避免因为精度问题导致不显示
-                        if sleep_ms > 0.001:  # 大于0.001ms才显示
-                            net_ms = runtime_ms - sleep_ms
-                            self.debug_log(LogLevel.INFO, f"  {i}. {func_name}: {runtime_ms:.3f}ms ({net_ms:.3f}ms + {sleep_ms:.3f}ms)")
-                        else:
-                            self.debug_log(LogLevel.INFO, f"  {i}. {func_name}: {runtime_ms:.3f}ms")
-                    total_time_ms = total_time * 1000  # 转换为毫秒
-                    self.debug_log(LogLevel.INFO, f"  总执行时间: {total_time_ms:.3f}ms")
+                # 打印完整的调用链（从刷新到购买完成）- 根据 debug_mode 选择模式
+                if self.debug_mode > 0:  # debug_mode=1 或 2
+                    mode = "simple" if self.debug_mode == 1 else "detail"
+                    lines = self.formatter.format_timing_records(
+                        refresh_result,  # 使用 refresh_result 包含刷新和购买的完整调用链
+                        title=f"第{self.refresh_count}次完整流程调用链 (刷新→购买，单价: {unit_price:.1f})",
+                        mode=mode
+                    )
+                    for line in lines:
+                        self.debug_log(LogLevel.INFO, line)
                 
                 return purchase_success
             else:
                 # 价格不合理，只执行了刷新阶段，打印刷新阶段的调用链
-                if hasattr(protocol, 'timing_records') and protocol.timing_records:
-                    self.debug_log(LogLevel.INFO, f"📊 第{self.refresh_count}次刷新阶段调用链 (单价: {unit_price:.1f}):")
-                    total_time = 0
-                    for i, record in enumerate(protocol.timing_records, 1):
-                        # 兼容新旧格式：新格式4元素，旧格式3元素
-                        if len(record) == 4:
-                            func_name, runtime, sleep_time, is_base = record
-                        else:
-                            func_name, runtime, is_base = record
-                            sleep_time = 0.0
-                        
-                        total_time += runtime
-                        runtime_ms = runtime * 1000  # 转换为毫秒
-                        sleep_ms = sleep_time * 1000  # 转换为毫秒
-                        
-                        # 只要sleep_ms > 0就显示，避免因为精度问题导致不显示
-                        if sleep_ms > 0.001:  # 大于0.001ms才显示
-                            net_ms = runtime_ms - sleep_ms
-                            self.debug_log(LogLevel.INFO, f"  {i}. {func_name}: {runtime_ms:.3f}ms ({net_ms:.3f}ms + {sleep_ms:.3f}ms)")
-                        else:
-                            self.debug_log(LogLevel.INFO, f"  {i}. {func_name}: {runtime_ms:.3f}ms")
-                    total_time_ms = total_time * 1000  # 转换为毫秒
-                    self.debug_log(LogLevel.INFO, f"  总执行时间: {total_time_ms:.3f}ms")
+                # 根据 debug_mode 选择模式
+                if self.debug_mode > 0:  # debug_mode=1 或 2
+                    mode = "simple" if self.debug_mode == 1 else "detail"
+                    lines = self.formatter.format_timing_records(
+                        refresh_result,  # 使用 refresh_result 只看刷新阶段
+                        title=f"第{self.refresh_count}次刷新阶段调用链 (单价: {unit_price:.1f})",
+                        mode=mode
+                    )
+                    for line in lines:
+                        self.debug_log(LogLevel.INFO, line)
                 
                 # 价格不合理，继续刷新
                 if unit_price < self.min_price_threshold:
@@ -460,7 +457,7 @@ class PurchaseRefreshBehavior(Behavior):
                 self.debug_log(LogLevel.ERROR, "🔍 获取刷新前余额失败")
                 return False
             
-            protocol <<= balance_before_result
+            # 自动合并（全局协议栈自动处理）
             balance_before = balance_before_result.balance
             
             # 执行刷新购买
@@ -474,7 +471,7 @@ class PurchaseRefreshBehavior(Behavior):
                 buy=True,
                 loop=False
             )
-            protocol <<= buy_result
+            # 自动合并（全局协议栈自动处理）
             
             if not buy_result.success:
                 self.send_log(LogLevel.WARNING, f"⚠️ 第{self.refresh_count}次刷新购买失败")
@@ -483,13 +480,13 @@ class PurchaseRefreshBehavior(Behavior):
             
             # 获取刷新后余额（带重试机制，处理余额延迟更新）
             balance_after = None
-            max_retries = 3
-            time.sleep(0.15)
+            max_retries = 6
+            self.sleep(0.15)
             for attempt in range(max_retries):
                 self.debug_log(LogLevel.INFO, f"🔍 第{attempt + 1}次获取刷新后余额...")
                 
                 balance_after_result = delta.get_balance(where="market", loop=True)
-                protocol <<= balance_after_result
+                # 自动合并（全局协议栈自动处理）
                 
                 if not balance_after_result.success:
                     self.send_log(LogLevel.WARNING, f"⚠️ 第{attempt + 1}次刷新后余额获取失败")
@@ -574,7 +571,7 @@ class PurchaseRefreshBehavior(Behavior):
                 self.send_log(LogLevel.WARNING, "⚠️ 无法获取购买前余额")
                 return False
             
-            protocol <<= balance_before_result
+            # 自动合并（全局协议栈自动处理）
             balance_before = balance_before_result.balance
             
             # 执行批量购买
@@ -585,7 +582,7 @@ class PurchaseRefreshBehavior(Behavior):
                 buy=True,
                 loop=False
             )
-            protocol <<= buy_result
+            # 自动合并（全局协议栈自动处理）
             
             if not buy_result.success:
                 self.send_log(LogLevel.ERROR, f"❌ 第{self.purchase_count}次批量购买失败")

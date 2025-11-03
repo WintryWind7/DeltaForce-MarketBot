@@ -80,15 +80,11 @@ class InitializationWorker(QThread):
                 delta = None
                 self.progress_updated.emit(90, "使用离线模式启动")
             
-            # 步骤8: 基本功能检查
+            # 步骤8: 基本功能检查（可选，失败不影响启动）
             self.progress_updated.emit(95, "正在进行基本功能检查...")
-            # 检查窗口枚举功能是否可用
-            try:
-                from DeltaForceWindow import enum_windows
-                windows = enum_windows()
-                self.progress_updated.emit(98, f"窗口功能检查完成，发现 {len(windows)} 个窗口")
-            except Exception as check_error:
-                self.progress_updated.emit(98, f"窗口功能检查警告: {str(check_error)}")
+            # 跳过窗口枚举检查，避免阻塞启动流程
+            # 这个检查不是必须的，窗口功能会在实际使用时按需初始化
+            self.progress_updated.emit(98, "基本功能检查完成（跳过窗口枚举）")
             
             # 步骤9: 完成初始化
             self.progress_updated.emit(100, "初始化完成!")

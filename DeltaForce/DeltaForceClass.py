@@ -90,6 +90,9 @@ class DeltaForceClass(DeltaForceRecognize):
         # 日志回调函数，用于将验证失败信息传递给GUI
         self.log_callback = None
         
+        # Protocol 栈，用于追踪嵌套调用的 sleep 时间
+        self._protocol_stack = []
+        
         # 导入pyautogui并借用其DPI感知功能，确保在高DPI显示器上正确工作
         import pyautogui
         
@@ -102,6 +105,91 @@ class DeltaForceClass(DeltaForceRecognize):
         self.window_height = 1080  # 默认高度
         self.window_x = 0  # 默认X位置
         self.window_y = 0  # 默认Y位置
+    
+    @protocol_handler()
+    def sleep(self, protocol, delay):
+        """
+        封装的 sleep 方法，自动作为独立函数记录时间并合并到父 protocol
+        
+        这个方法会被 @protocol_handler 装饰，因此会自动：
+        1. 创建独立的 protocol 实例
+        2. 记录执行时间（包括 sleep 本身）
+        3. 自动合并到父 protocol（如果存在）
+        4. 在日志中显示为子函数（缩进显示）
+        
+        Args:
+            protocol: DeltaProtocol 实例（装饰器自动注入）
+            delay: 睡眠时间（秒）
+        
+        Example:
+            self.sleep(0.5)  # 一行搞定，自动合并
+            # 日志会显示: "  - sleep: 500.123ms"（作为父函数的子项）
+        """
+        import time
+        
+        # 记录 sleep 时间到自己的 protocol
+        protocol.sleep_time = delay
+        
+        # 标记为底层函数
+        protocol.is_base_function = True
+        
+        # 真正的睡眠
+        time.sleep(delay)
+        
+        return True
+    
+    def _push_protocol(self, protocol):
+        """
+        将 protocol 推入栈中（装饰器调用）
+        
+        Args:
+            protocol: DeltaProtocol 实例
+        """
+        self._protocol_stack.append(protocol)
+    
+    def _pop_protocol(self):
+        """
+        从栈中弹出 protocol（装饰器调用）
+        """
+        if self._protocol_stack:
+            self._protocol_stack.pop()
+    
+    @protocol_handler()
+    def _calculate_screenshot_region(self, protocol, m4_ratio: tuple, m5_ratio: tuple) -> bool:
+        """
+        计算截图区域坐标（底层函数，用于性能追踪 - 坐标转换耗时）
+        
+        Args:
+            m4_ratio: 区域左上角比例坐标 (x_ratio, y_ratio)
+            m5_ratio: 区域右下角比例坐标 (x_ratio, y_ratio)
+        
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
+        # 步骤1: 将比例坐标转换为屏幕绝对坐标
+        m4_screen = self.ratio_to_screen_coords(m4_ratio[0], m4_ratio[1])  # 截图区域左上角
+        m5_screen = self.ratio_to_screen_coords(m5_ratio[0], m5_ratio[1])  # 截图区域右下角
+        if not m4_screen or not m5_screen:
+            protocol.error_message = "坐标转换失败"
+            return False
+        
+        # 步骤2: 计算截图区域的边界坐标
+        # 确保left < right 和 top < bottom，处理可能的坐标顺序问题
+        left = min(m4_screen[0], m5_screen[0])
+        top = min(m4_screen[1], m5_screen[1])
+        right = max(m4_screen[0], m5_screen[0])
+        bottom = max(m4_screen[1], m5_screen[1])
+        
+        # 存储到protocol
+        protocol.left = left
+        protocol.top = top
+        protocol.right = right
+        protocol.bottom = bottom
+        protocol.width = right - left
+        protocol.height = bottom - top
+        protocol.is_base_function = True  # 标记为底层函数
+        
+        return True
     
     @protocol_handler()
     def get_balance(self, protocol, where="default", loop=False, return_json=False) -> bool:
@@ -173,57 +261,54 @@ class DeltaForceClass(DeltaForceRecognize):
         try:
             # 步骤1: 点击余额按钮位置，触发余额显示界面
             click_result = self.click_ratio(m3_ratio[0], m3_ratio[1])
-            protocol <<= click_result
-            time.sleep(0.030)  # 最小等待，确保界面响应
+            # 自动合并，无需手动 protocol <<= click_result
+            self.sleep(0.01)  # 最小等待，确保界面响应
             
-            # 步骤2: 将比例坐标转换为屏幕绝对坐标
-            m4_screen = self.ratio_to_screen_coords(m4_ratio[0], m4_ratio[1])  # 截图区域左上角
-            m5_screen = self.ratio_to_screen_coords(m5_ratio[0], m5_ratio[1])  # 截图区域右下角
-            if not m4_screen or not m5_screen:
-                protocol.error_message = "坐标转换失败"
+            # 步骤2: 计算截图区域坐标（使用底层函数追踪坐标转换耗时）
+            region_result = self._calculate_screenshot_region(m4_ratio, m5_ratio)
+            if not region_result.success:
+                protocol.error_message = "区域计算失败"
                 return False
             
-            # 步骤3: 计算截图区域的边界坐标
-            # 确保left < right 和 top < bottom，处理可能的坐标顺序问题
-            left = min(m4_screen[0], m5_screen[0])
-            top = min(m4_screen[1], m5_screen[1])
-            right = max(m4_screen[0], m5_screen[0])
-            bottom = max(m4_screen[1], m5_screen[1])
-            
-            # 步骤4: 截取包含余额信息的屏幕区域
-            screenshot = pyautogui.screenshot(region=(left, top, right-left, bottom-top))
-            screenshot_array = np.array(screenshot)  # 转换为numpy数组供OCR使用
-            
-            # 步骤5: 使用OCR技术识别截图中的数字内容
-            # 配置OCR参数以优化数字识别准确性
-            results = self.ocr.reader.readtext(
-                screenshot_array,
-                allowlist='1234567890',  # 限制只识别数字字符，提高准确性
-                width_ths=0.7,          # 文本框宽度阈值
-                height_ths=0.7,         # 文本框高度阈值
-                text_threshold=0.5,     # 文本置信度阈值
-                decoder='beamsearch'    # 使用束搜索解码器提高识别准确性
+            # 步骤3: 截取包含余额信息的屏幕区域（使用封装方法追踪纯截图耗时）
+            screenshot_result = self.screenshot_region(
+                region_result.left, 
+                region_result.top, 
+                region_result.width, 
+                region_result.height
             )
+            screenshot_array = screenshot_result.screenshot_array
             
-            # 准备JSON返回数据（如果需要）
-            if return_json:
-                import base64
-                from io import BytesIO
-                from datetime import datetime
+            # 步骤4: 使用OCR技术识别截图中的数字内容（使用默认数字识别参数）
+            ocr_result = self.ocr_readtext(screenshot_array)
+            results = ocr_result.ocr_results
+            
+            # 准备 screenshot 和 JSON 数据
+            screenshot = None
+            screenshot_base64 = None
+            ocr_results_data = []
+            
+            if hasattr(screenshot_result, 'screenshot'):
+                screenshot = screenshot_result.screenshot
                 
-                # 将截图转换为base64编码
-                buffer = BytesIO()
-                screenshot.save(buffer, format='PNG')
-                screenshot_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-                
-                # 准备OCR结果数据
-                ocr_results_data = []
-                for bbox, text, confidence in results:
-                    ocr_results_data.append({
-                        "bbox": bbox.tolist() if hasattr(bbox, 'tolist') else bbox,
-                        "text": text,
-                        "confidence": float(confidence)
-                    })
+                # 准备JSON返回数据（如果需要）
+                if return_json:
+                    import base64
+                    from io import BytesIO
+                    from datetime import datetime
+                    
+                    # 将截图转换为base64编码
+                    buffer = BytesIO()
+                    screenshot.save(buffer, format='PNG')
+                    screenshot_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                    
+                    # 准备OCR结果数据
+                    for bbox, text, confidence in results:
+                        ocr_results_data.append({
+                            "bbox": bbox.tolist() if hasattr(bbox, 'tolist') else bbox,
+                            "text": text,
+                            "confidence": float(confidence)
+                        })
             
             # 步骤6: 处理OCR识别结果并提取余额数值
             if results:
@@ -250,6 +335,7 @@ class DeltaForceClass(DeltaForceRecognize):
                     protocol.balance = balance
                     protocol.where = where
                     protocol.combined_text = combined_text
+                    protocol.screenshot = screenshot  # 保存截图到协议对象
                     
                     
                     if return_json:
@@ -260,10 +346,10 @@ class DeltaForceClass(DeltaForceRecognize):
                             "merged_text": combined_text,
                             "screenshot_base64": screenshot_base64,
                             "region_coords": {
-                                "left": left,
-                                "top": top,
-                                "right": right,
-                                "bottom": bottom,
+                                "left": region_result.left,
+                                "top": region_result.top,
+                                "right": region_result.right,
+                                "bottom": region_result.bottom,
                                 "m4_ratio": m4_ratio,
                                 "m5_ratio": m5_ratio
                             },
@@ -287,10 +373,10 @@ class DeltaForceClass(DeltaForceRecognize):
                             "merged_text": combined_text,
                             "screenshot_base64": screenshot_base64,
                             "region_coords": {
-                                "left": left,
-                                "top": top,
-                                "right": right,
-                                "bottom": bottom,
+                                "left": region_result.left,
+                                "top": region_result.top,
+                                "right": region_result.right,
+                                "bottom": region_result.bottom,
                                 "m4_ratio": m4_ratio,
                                 "m5_ratio": m5_ratio
                             },
@@ -322,10 +408,10 @@ class DeltaForceClass(DeltaForceRecognize):
                         "merged_text": "",
                         "screenshot_base64": screenshot_base64,
                         "region_coords": {
-                            "left": left,
-                            "top": top,
-                            "right": right,
-                            "bottom": bottom,
+                            "left": region_result.left,
+                            "top": region_result.top,
+                            "right": region_result.right,
+                            "bottom": region_result.bottom,
                             "m4_ratio": m4_ratio,
                             "m5_ratio": m5_ratio
                         },
@@ -632,8 +718,8 @@ class DeltaForceClass(DeltaForceRecognize):
         
         # 直接使用click_ratio方法点击子弹按钮
         click_result = self.click_ratio(0.8400, 0.7000)
-        if click_result:
-            protocol <<= click_result
+        # 自动合并，无需手动 protocol <<= click_result
+        if click_result and click_result.success:
             return True
         else:
             protocol.error_message = "点击子弹按钮失败"
@@ -661,7 +747,7 @@ class DeltaForceClass(DeltaForceRecognize):
             
             # 移动前等待
             if do_after > 0:
-                time.sleep(do_after)
+                self.sleep(do_after)
             
             # 将比例坐标转换为屏幕坐标
             screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
@@ -673,14 +759,14 @@ class DeltaForceClass(DeltaForceRecognize):
             pyautogui.moveTo(screen_coords[0], screen_coords[1])
             
             # 移动和点击之间添加短暂延迟
-            time.sleep(0.009)
+            self.sleep(0.009)
             
             # 执行点击
             pyautogui.click()
             
             # 点击后等待
             if do_wait > 0:
-                time.sleep(do_wait)
+                self.sleep(do_wait)
             
             protocol.click_success = True
             return True
@@ -710,7 +796,7 @@ class DeltaForceClass(DeltaForceRecognize):
             
             # 移动前等待
             if do_after > 0:
-                time.sleep(do_after)
+                self.sleep(do_after)
             
             # 将比例坐标转换为屏幕坐标
             screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
@@ -796,8 +882,8 @@ class DeltaForceClass(DeltaForceRecognize):
         
         try:
             # 计算数量选择条的点击位置
-            left_ratio = 0.7890   # 最左侧位置
-            right_ratio = 0.9036  # 最右侧位置
+            left_ratio = 0.7892   # 最左侧位置
+            right_ratio = 0.9040  # 最右侧位置
             y_ratio = 0.7233      # 纵坐标位置
             
             # 计算购买比例 - 直接映射逻辑
@@ -818,7 +904,7 @@ class DeltaForceClass(DeltaForceRecognize):
             
             # 点击数量选择条
             click_result = self.click_ratio(click_x_ratio, y_ratio)
-            protocol <<= click_result
+            # 自动合并，无需手动 protocol <<= click_result
             if not click_result.success:
                 protocol.error_message = "数量选择点击失败"
                 return False
@@ -831,7 +917,7 @@ class DeltaForceClass(DeltaForceRecognize):
                 return True
             
             # 短暂延迟后执行购买操作
-            time.sleep(0.005)
+            self.sleep(0.005)
             
             # 先点击预备位置 (0.0711, 0.1985) - 已被用户注释掉
             # if not self._click_ratio_internal(0.0711, 0.1985):
@@ -845,7 +931,7 @@ class DeltaForceClass(DeltaForceRecognize):
             # 循环点击购买按钮 (0.8511, 0.7994)
             for i in range(times):
                 buy_click_result = self.click_ratio(0.8511, 0.7994)
-                protocol <<= buy_click_result
+                # 自动合并，无需手动 protocol <<= buy_click_result
                 if not buy_click_result.success:
                     protocol.error_message = f"第 {i+1} 次购买点击失败"
                     return False
@@ -854,7 +940,7 @@ class DeltaForceClass(DeltaForceRecognize):
                 
                 # 除了最后一次，都需要延迟
                 if i < times - 1:
-                    time.sleep(delay)
+                    self.sleep(delay)
             
             print(f"✅ [buy_in_market] 购买操作完成，数量: {buyin}/{maxin}，点击 {times} 次")
             return True
@@ -875,11 +961,11 @@ class DeltaForceClass(DeltaForceRecognize):
             bool: 操作成功返回True，失败返回False
         """
         # 根据action参数执行相应操作
+        # 所有 self.click_ratio() 调用都会自动合并，无需手动 protocol <<=
         if action == "555":
             # 点击余额按钮
             click_result = self.click_ratio(0.8066, 0.0866)
-            if click_result:
-                protocol <<= click_result
+            if click_result and click_result.success:
                 return True
             else:
                 protocol.error_message = "点击555按钮失败"
@@ -888,8 +974,7 @@ class DeltaForceClass(DeltaForceRecognize):
         elif action == "开始游戏":
             # 点击开始游戏按钮
             click_result = self.click_ratio(0.1057, 0.0866)
-            if click_result:
-                protocol <<= click_result
+            if click_result and click_result.success:
                 return True
             else:
                 protocol.error_message = "点击开始游戏按钮失败"
@@ -898,8 +983,7 @@ class DeltaForceClass(DeltaForceRecognize):
         elif action == "交易行":
             # 点击交易行按钮
             click_result = self.click_ratio(0.3727, 0.0866)
-            if click_result:
-                protocol <<= click_result
+            if click_result and click_result.success:
                 return True
             else:
                 protocol.error_message = "点击交易行按钮失败"
@@ -908,8 +992,7 @@ class DeltaForceClass(DeltaForceRecognize):
         elif action == "仓库":
             # 点击仓库按钮
             click_result = self.click_ratio(0.1718, 0.0866)
-            if click_result:
-                protocol <<= click_result
+            if click_result and click_result.success:
                 return True
             else:
                 protocol.error_message = "点击仓库按钮失败"
@@ -918,12 +1001,12 @@ class DeltaForceClass(DeltaForceRecognize):
         elif action == "出售":
             # 出售操作：先点击交易行，延迟1秒后点击出售位置
             # 第一步：点击交易行
-            if not self.click_ratio(0.3727, 0.0866):
+            click_result1 = self.click_ratio(0.3727, 0.0866)
+            if not click_result1 or not click_result1.success:
                 return False
             # 第二步：延迟1秒后点击出售位置
             click_result = self.click_ratio(0.1760, 0.1362, do_after=1.0)
-            if click_result:
-                protocol <<= click_result
+            if click_result and click_result.success:
                 return True
             else:
                 protocol.error_message = "点击出售位置失败"
@@ -1104,11 +1187,10 @@ class DeltaForceClass(DeltaForceRecognize):
                 
                 # 3. 检测当前前台窗口
                 current_foreground_result = self.get_foreground_window_handle()
-                if not current_foreground_result:
+                # 自动合并，无需手动 protocol <<=
+                if not current_foreground_result or not current_foreground_result.success:
                     print(f"❌ [窗口验证] 无法获取当前前台窗口句柄")
-                    protocol <<= current_foreground_result
                     return False
-                protocol <<= current_foreground_result
                 current_foreground = current_foreground_result.foreground_handle
                 
                 # 4. 验证是否为目标窗口
@@ -1149,12 +1231,11 @@ class DeltaForceClass(DeltaForceRecognize):
                 
                 # 3. 检测当前前台窗口
                 current_foreground_result = self.get_foreground_window_handle()
-                if not current_foreground_result:
+                # 自动合并，无需手动 protocol <<=
+                if not current_foreground_result or not current_foreground_result.success:
                     print(f"⚠️ [窗口验证] 第 {retry_count} 次无法获取前台窗口句柄，等待后重试...")
-                    protocol <<= current_foreground_result
                     time.sleep(0.5)
                     continue
-                protocol <<= current_foreground_result
                 current_foreground = current_foreground_result.foreground_handle
                 
                 # 4. 验证是否为目标窗口

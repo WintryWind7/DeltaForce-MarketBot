@@ -83,6 +83,14 @@ BEHAVIOR_INFO = {
             "label": "自动关机",
             "default": True,
             "description": "到达工作结束时间时自动关闭电脑"
+        },
+        "debug_mode": {
+            "type": "int",
+            "label": "调试模式",
+            "default": 0,
+            "min": 0,
+            "max": 2,
+            "description": "0=关闭, 1=简化debug(隐藏底层函数), 2=详细debug(显示所有函数)"
         }
     }
 }
@@ -151,6 +159,15 @@ class DualMarketBotBehavior(QThread):
         self.work_start_time = self.config.get('work_start_time', '00:00')
         self.work_end_time = self.config.get('work_end_time', '05:15')
         self.auto_shutdown = self.config.get('auto_shutdown', True)
+        self.debug_mode = self.config.get('debug_mode', 0)
+        
+        # 调试模式信息
+        if self.debug_mode == 0:
+            self.log_message.emit("📝 普通模式，显示所有日志")
+        elif self.debug_mode == 1:
+            self.log_message.emit("🔍 简化调试模式已开启（隐藏底层函数）")
+        elif self.debug_mode == 2:
+            self.log_message.emit("🔍 详细调试模式已开启（显示所有函数）")
         
         # 运行状态
         self.should_stop = False

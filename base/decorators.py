@@ -8,6 +8,7 @@ import functools
 from typing import Callable, Optional
 import os
 import sys
+import threading
 
 # 添加当前目录到路径并优先使用
 current_dir = os.path.dirname(__file__)
@@ -15,6 +16,17 @@ sys.path.insert(0, current_dir)
 
 from timer import Timer
 from DeltaProtocol import DeltaProtocol
+
+# 全局协议栈（使用线程本地存储，支持多线程）
+_thread_local = threading.local()
+
+# 全局调用序号计数器（使用线程本地存储）
+def _get_next_call_order():
+    """获取下一个调用序号"""
+    if not hasattr(_thread_local, 'call_order_counter'):
+        _thread_local.call_order_counter = 0
+    _thread_local.call_order_counter += 1
+    return _thread_local.call_order_counter
 
 
 def protocol_handler(operation: Optional[str] = None):
@@ -51,8 +63,23 @@ def protocol_handler(operation: Optional[str] = None):
             # 确定操作名称
             op_name = operation if operation is not None else func.__name__
             
+            # 🎯 分配调用序号（在函数执行前就分配，确保按调用顺序）
+            call_order = _get_next_call_order()
+            
             # 创建协议实例
             protocol = DeltaProtocol(operation=op_name)  # success默认为None，只能通过函数返回值设置
+            protocol.call_order = call_order  # 保存调用序号
+            
+            # 🎯 使用全局协议栈（线程安全）
+            if not hasattr(_thread_local, 'protocol_stack'):
+                _thread_local.protocol_stack = []
+            
+            # 推入全局协议栈
+            _thread_local.protocol_stack.append(protocol)
+            
+            # 同时推入实例的协议栈（用于兼容性，如 delta.sleep()）
+            if hasattr(self, '_push_protocol'):
+                self._push_protocol(protocol)
             
             with Timer() as timer:
                 # 将protocol作为第二个参数注入到原函数中
@@ -70,13 +97,30 @@ def protocol_handler(operation: Optional[str] = None):
                     else:
                         protocol.message = f"{op_name} 执行失败"
             
+            # 🎯 从全局协议栈获取父 protocol
+            parent_protocol = None
+            if len(_thread_local.protocol_stack) > 1:
+                parent_protocol = _thread_local.protocol_stack[-2]  # 获取父 protocol
+            
+            # 弹出全局协议栈
+            _thread_local.protocol_stack.pop()
+            
+            # 同时弹出实例的协议栈（用于兼容性）
+            if hasattr(self, '_pop_protocol'):
+                self._pop_protocol()
+            
             # 将执行时间添加到协议中
             protocol.elapsed_time = timer.elapsed_time
-            # 记录sleep时间（仅用于显示）
-            protocol.sleep_time = timer.sleep_time
+            # sleep_time 已由 delta.sleep() 直接记录到 protocol 中
+            # 不需要从 timer 获取（timer 不再追踪 sleep）
             
-            # 添加到时间记录列表（逻辑不变）
-            protocol.add_timing()
+            # 添加到时间记录列表（传入调用序号）
+            protocol.add_timing(call_order=call_order)
+            
+            # 🎯 自动合并到父 protocol（如果存在）
+            # 无论是 self.xxx() 还是 other_obj.xxx()，只要有父 protocol 就自动合并
+            if parent_protocol is not None:
+                parent_protocol <<= protocol
             
             # 返回协议实例，而不是原函数的返回值
             return protocol
