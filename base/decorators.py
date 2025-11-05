@@ -85,17 +85,27 @@ def protocol_handler(operation: Optional[str] = None):
                 # 将protocol作为第二个参数注入到原函数中
                 result = func(self, protocol, *args, **kwargs)
                 
+                # 🎯 自动短路：如果子函数失败，直接让当前函数失败
+                if hasattr(protocol, '_child_failed') and protocol._child_failed:
+                    result = False
+                
                 # 检查返回值必须是True或False
                 if result not in (True, False):
                     raise ValueError(f"函数 {op_name} 必须返回 True 或 False，实际返回: {result}")
                 
                 # 根据函数返回值设置协议success状态
                 protocol.success = result
+                
+                # 设置消息并打印失败信息
                 if not hasattr(protocol, 'message'):
                     if result:
                         protocol.message = f"{op_name} 执行成功"
                     else:
                         protocol.message = f"{op_name} 执行失败"
+                
+                # 如果失败，打印 error_message（如果有）
+                if not result and hasattr(protocol, 'error_message') and protocol.error_message:
+                    print(f"❌ [{op_name}] {protocol.error_message}")
             
             # 🎯 从全局协议栈获取父 protocol
             parent_protocol = None

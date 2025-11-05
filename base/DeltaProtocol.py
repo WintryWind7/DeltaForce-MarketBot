@@ -88,10 +88,17 @@ class DeltaProtocol:
         if not isinstance(other_protocol, DeltaProtocol):
             raise TypeError(f"只能合并 DeltaProtocol 实例，实际类型: {type(other_protocol)}")
         
+        # 🎯 自动短路：如果子协议失败，标记父协议需要短路
+        if hasattr(other_protocol, 'success') and other_protocol.success == False:
+            self._child_failed = True
+            # 传播 error_message
+            if hasattr(other_protocol, 'error_message') and not hasattr(self, 'error_message'):
+                self.error_message = other_protocol.error_message
+        
         other_dict = other_protocol.to_dict()
         for key, value in other_dict.items():
             # 跳过核心字段，只继承业务数据
-            if key not in ['success', 'operation', 'elapsed_time', 'timing_records', 'is_base_function', 'nested_time']:
+            if key not in ['success', 'operation', 'elapsed_time', 'timing_records', 'is_base_function', 'nested_time', '_child_failed']:
                 setattr(self, key, value)
         
         # 🎯 继承时间记录（并增加深度）

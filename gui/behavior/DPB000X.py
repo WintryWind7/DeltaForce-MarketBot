@@ -247,6 +247,15 @@ class DualPurchaseBehavior(Behavior):
     
     def main_logic(self):
         """主业务逻辑"""
+        print("=" * 80)
+        print("🔍 [DEBUG] main_logic 函数已被调用！")
+        print("=" * 80)
+        
+        try:
+            self.send_log(LogLevel.INFO, "🔍 [DEBUG] main_logic 函数开始执行")
+        except Exception as e:
+            print(f"❌ [DEBUG] send_log 异常: {e}")
+        
         # ========== 临时测试模式：仅测试仓库配装流程（已注释） ==========
         # if not self.is_delta_ready():
         #     self.send_log(LogLevel.ERROR, "❌ Delta实例未就绪，程序退出")
@@ -283,14 +292,39 @@ class DualPurchaseBehavior(Behavior):
         
         # ========== 完整逻辑 ==========
         # 检查双端模式
-        if not self.is_dual_mode():
-            return self.exit_behavior("DPB000X需要双端模式", success=False)
+        print("🔍 [DEBUG] 开始检查双端模式...")
+        try:
+            self.send_log(LogLevel.INFO, f"🔍 [DEBUG] 准备检查双端模式")
+            is_dual = self.is_dual_mode()
+            print(f"🔍 [DEBUG] is_dual_mode() 返回: {is_dual}")
+            self.send_log(LogLevel.INFO, f"🔍 检查双端模式: {is_dual}")
+            if not is_dual:
+                print("❌ [DEBUG] 不是双端模式，准备退出")
+                self.send_log(LogLevel.ERROR, "❌ DPB000X需要双端模式")
+                return self.exit_behavior("DPB000X需要双端模式", success=False)
+            
+            print("✅ [DEBUG] 是双端模式，继续执行")
+            self.system_log(LogLevel.SUCCESS, "🚀 DPB000X开始执行（双端模式）")
+            print("🔍 [DEBUG] system_log 第1条执行完成")
+            self.system_log(LogLevel.INFO, "📋 执行流程: 初始化 → 辅端刷新阶段 → 主端购买阶段")
+            print("🔍 [DEBUG] system_log 第2条执行完成")
+            # 暂时注释掉 send_log 测试
+            # self.send_log(LogLevel.INFO, "🔍 [DEBUG] system_log 执行完成")
+            print("🔍 [DEBUG] 检查双端模式完成")
+        except Exception as e:
+            print(f"❌ [DEBUG] 异常: {e}")
+            self.send_log(LogLevel.ERROR, f"❌ [DEBUG] 异常: {e}")
+            import traceback
+            traceback.print_exc()
         
-        self.system_log(LogLevel.SUCCESS, "🚀 DPB000X开始执行（双端模式）")
-        self.system_log(LogLevel.INFO, "📋 执行流程: 初始化 → 辅端刷新阶段 → 主端购买阶段")
-        
+        print("🔍 [DEBUG] 准备初始化余额...")
         # 初始化余额（辅端）
-        if not self.initialize_balance():
+        self.send_log(LogLevel.INFO, "💰 开始初始化余额...")
+        print("🔍 [DEBUG] send_log 执行完成")
+        init_result = self.initialize_balance()
+        self.send_log(LogLevel.INFO, f"💰 初始化余额结果: {init_result}")
+        if not init_result:
+            self.send_log(LogLevel.ERROR, "❌ 余额初始化失败")
             return self.exit_behavior("余额初始化失败", success=False)
         
         # 主循环
@@ -309,7 +343,8 @@ class DualPurchaseBehavior(Behavior):
             aux_delta = self.get_aux_delta()
             if aux_delta:
                 self.debug_log(LogLevel.INFO, "🔄 切换到辅端窗口...")
-                if not aux_delta.focus_window():
+                focus_result = aux_delta.focus_window()  # 装饰器自动追踪
+                if not focus_result.success:
                     self.send_log(LogLevel.WARNING, "⚠️ 切换辅端窗口失败")
                 time.sleep(0.1)
             
@@ -327,11 +362,7 @@ class DualPurchaseBehavior(Behavior):
                     self.send_log(LogLevel.SUCCESS, "✅ 一轮刷新完成")
             else:
                 self.increment_error()
-                if found_low_price:
-                    self.send_log(LogLevel.WARNING, "⚠️ 发现低价但配装失败，等待5秒后继续循环")
-                    time.sleep(5.0)
-                else:
-                    self.send_log(LogLevel.WARNING, "⚠️ 一轮刷新失败")
+                # 刷新失败（不打印日志）
             
             # 检查余额变化 - 连续20次余额不变则退出
             if not self.monitor_balance_change():
@@ -353,17 +384,9 @@ class DualPurchaseBehavior(Behavior):
             # 刷新阶段（辅端）
             self.current_phase = "刷新阶段"
             refresh_result = self.refresh_phase()
-            # 自动合并（self 的方法会自动合并到 protocol）
-            
-            # 检查刷新是否成功
-            if not refresh_result or not refresh_result.success:
-                return False
             
             # 从protocol中获取unit_price
             unit_price = getattr(refresh_result, 'unit_price', None)
-            
-            if unit_price is None:
-                return False
             
             # 判断是否进入购买阶段
             if unit_price <= self.target_price and unit_price >= self.min_price_threshold:
@@ -401,11 +424,7 @@ class DualPurchaseBehavior(Behavior):
                     for line in lines:
                         self.debug_log(LogLevel.INFO, line)
                 
-                # 价格不合理，继续刷新
-                if unit_price < self.min_price_threshold:
-                    self.send_log(LogLevel.WARNING, f"⚠️ 价格过低: {unit_price:.1f} < {self.min_price_threshold} (可能识别错误)")
-                else:
-                    self.send_log(LogLevel.DEBUG, f"🔄 价格过高: {unit_price:.1f} > {self.target_price}")
+                # 价格不合理，继续刷新（不打印日志）
                 
                 return False
                 
@@ -415,288 +434,214 @@ class DualPurchaseBehavior(Behavior):
     
     def initialize_balance(self):
         """初始化余额跟踪（辅端）"""
-        try:
-            # 获取辅端Delta实例
-            aux_delta = self.get_aux_delta()
-            if not aux_delta:
-                self.send_log(LogLevel.ERROR, "❌ 无法获取辅端Delta实例")
-                return False
-            
-            # 切换到辅端窗口
-            self.send_log(LogLevel.INFO, "🔄 切换到辅端窗口...")
-            if not aux_delta.focus_window():
-                self.send_log(LogLevel.WARNING, "⚠️ 切换辅端窗口失败")
-            
-            self.send_log(LogLevel.INFO, "💰 正在获取辅端初始余额...")
-            
-            balance_result = aux_delta.get_balance(where="market", loop=True)
-            if not balance_result.success:
-                self.send_log(LogLevel.ERROR, "❌ 无法获取辅端初始余额")
-                return False
-            
-            # 初始化阶段不打印调用链
-            
-            balance = balance_result.balance
-            self.initial_balance = balance
-            self.current_balance = balance
-            self.last_balance = balance
-            
-            self.log_with_stats(LogLevel.SUCCESS, f"💰 辅端初始余额: {balance:,}", 
-                               initial_balance=balance)
-            self.debug_log(LogLevel.INFO, f"🔍 初始化余额设置: {balance:,}")
-            return True
-            
-        except Exception as e:
-            self.send_log(LogLevel.ERROR, f"❌ 余额初始化异常: {e}")
+        # 获取辅端Delta实例
+        aux_delta = self.get_aux_delta()
+        if not aux_delta:
+            self.send_log(LogLevel.ERROR, "❌ 无法获取辅端Delta实例")
             return False
+        
+        # 切换到辅端窗口
+        self.send_log(LogLevel.INFO, "🔄 切换到辅端窗口...")
+        focus_result = aux_delta.focus_window()  # 装饰器自动追踪
+        if not focus_result.success:
+            self.send_log(LogLevel.WARNING, "⚠️ 切换辅端窗口失败")
+        
+        self.send_log(LogLevel.INFO, "💰 正在获取辅端初始余额...")
+        
+        balance_result = aux_delta.get_balance(where="market", retry=50)
+        if not balance_result.success:
+            self.send_log(LogLevel.ERROR, "❌ 无法获取辅端初始余额")
+            return False
+        
+        balance = balance_result.balance
+        self.initial_balance = balance
+        self.current_balance = balance
+        self.last_balance = balance
+        
+        self.log_with_stats(LogLevel.SUCCESS, f"💰 辅端初始余额: {balance:,}", 
+                           initial_balance=balance)
+        self.debug_log(LogLevel.INFO, f"🔍 初始化余额设置: {balance:,}")
+        return True
     
     @protocol_handler()
     def refresh_phase(self, protocol):
         """刷新阶段 - 辅端购买少量子弹检测价格"""
-        try:
-            # 获取辅端Delta实例
-            aux_delta = self.get_aux_delta()
-            if not aux_delta:
-                self.send_log(LogLevel.ERROR, "❌ 无法获取辅端Delta实例")
-                return False
-            
-            self.refresh_count += 1
-            
-            # 获取刷新前余额
-            self.debug_log(LogLevel.INFO, f"🔍 开始第{self.refresh_count}次刷新操作（辅端）")
-            balance_before_result = aux_delta.get_balance(where="market", loop=True)
-            # 自动合并（全局协议栈自动处理）
-            if not balance_before_result.success:
-                self.send_log(LogLevel.WARNING, "⚠️ 无法获取刷新前余额")
-                self.debug_log(LogLevel.ERROR, "🔍 获取刷新前余额失败")
-                return False
-            
-            balance_before = balance_before_result.balance
-            
-            # 执行刷新购买
-            self.log_with_stats(LogLevel.INFO, f"🔄 第{self.refresh_count}次刷新（辅端）: 购买{self.refresh_quantity}发检测价格 (参数: buyin={self.refresh_quantity}, maxin={self.max_quantity})",
-                              refresh_count=self.refresh_count, refresh_quantity=self.refresh_quantity)
-            
-            buy_result = aux_delta.buy_in_market(
-                buyin=self.refresh_quantity,
-                maxin=self.max_quantity,
-                times=1,
-                buy=True,
-                loop=False
-            )
-            # 自动合并（全局协议栈自动处理）
-            
-            if not buy_result.success:
-                self.send_log(LogLevel.WARNING, f"⚠️ 第{self.refresh_count}次刷新购买失败")
-                self.debug_log(LogLevel.ERROR, f"🔍 刷新购买失败: {self.refresh_quantity}发")
-                return False
-            
-            # 获取刷新后余额（带重试机制，处理余额延迟更新）
-            balance_after = None
-            max_retries = 3
-            time.sleep(0.15)
-            for attempt in range(max_retries):
-                self.debug_log(LogLevel.INFO, f"🔍 第{attempt + 1}次获取刷新后余额...")
-                
-                balance_after_result = aux_delta.get_balance(where="market", loop=True)
-                # 自动合并（全局协议栈自动处理）
-                
-                if not balance_after_result.success:
-                    self.send_log(LogLevel.WARNING, f"⚠️ 第{attempt + 1}次刷新后余额获取失败")
-                    continue
-                
-                current_balance = balance_after_result.balance
-                balance_change = balance_before - current_balance
-                
-                # 如果余额有变化（差价不为0），说明购买生效了
-                if balance_change != 0:
-                    self.debug_log(LogLevel.SUCCESS, f"🔍 第{attempt + 1}次检测成功：余额变化 {balance_change}")
-                    balance_after = current_balance
-                    break
-                else:
-                    self.debug_log(LogLevel.WARNING, f"🔍 第{attempt + 1}次余额未变化: {balance_before} == {current_balance}")
-                    balance_after = current_balance  # 保存最后一次的结果
-            
-            if balance_after is None:
-                self.send_log(LogLevel.WARNING, "⚠️ 无法获取刷新后余额")
-                return False
-            
-            # 计算价格
-            price_diff = balance_before - balance_after
-            unit_price = price_diff / self.refresh_quantity
-            
-            # 将unit_price存入protocol
-            protocol.unit_price = unit_price
-            
-            # 保存OCR截图（已注释，调试完成）
-            # if hasattr(balance_before_result, 'screenshot') and balance_before_result.screenshot:
-            #     screenshot_dir = os.path.join(os.getcwd(), "log", "screenshots")
-            #     os.makedirs(screenshot_dir, exist_ok=True)
-            #     filename = f"{balance_before}.png"
-            #     filepath = os.path.join(screenshot_dir, filename)
-            #     balance_before_result.screenshot.save(filepath)
-            #     self.debug_log(LogLevel.INFO, f"💾 已保存刷新前余额截图: {filename}")
-            # 
-            # if hasattr(balance_after_result, 'screenshot') and balance_after_result.screenshot:
-            #     screenshot_dir = os.path.join(os.getcwd(), "log", "screenshots")
-            #     os.makedirs(screenshot_dir, exist_ok=True)
-            #     filename = f"{balance_after}.png"
-            #     filepath = os.path.join(screenshot_dir, filename)
-            #     balance_after_result.screenshot.save(filepath)
-            #     self.debug_log(LogLevel.INFO, f"💾 已保存刷新后余额截图: {filename}")
-            
-            # 更新统计
-            self.refresh_cost_total += price_diff
-            self.current_balance = balance_after
-            
-            # 记录刷新数据
-            self.refresh_cost_records.append({
-                'cycle': self.refresh_count,
-                'cost': price_diff,
-                'unit_price': unit_price,
-                'quantity': self.refresh_quantity,
-                'balance_before': balance_before,
-                'balance_after': balance_after
-            })
-            
-            self.log_with_stats(LogLevel.INFO, f"🔄 第{self.refresh_count}次刷新完成（辅端）: 单价 {unit_price:.1f}, 数量 {self.refresh_quantity}发, 花费 {price_diff:,.0f}, 余额 {balance_after:,}",
-                              refresh_count=self.refresh_count, 
-                              unit_price=unit_price,
-                              refresh_cost=price_diff,
-                              current_balance=balance_after)
-            
-            # 记录价格数据到CSV
-            if unit_price <= self.target_price and unit_price >= self.min_price_threshold:
-                action = "发现低价"
-            elif unit_price < self.min_price_threshold:
-                action = "价格过低"
-            else:
-                action = "价格过高"
-            
-            self.record_price_data(balance_before, balance_after, unit_price, action)
-            
-            return True
-                
-        except Exception as e:
-            self.send_log(LogLevel.ERROR, f"❌ 刷新阶段异常: {e}")
+        # 获取辅端Delta实例
+        aux_delta = self.get_aux_delta()
+        
+        self.refresh_count += 1
+        
+        # 获取刷新前余额
+        self.debug_log(LogLevel.INFO, f"🔍 开始第{self.refresh_count}次刷新操作（辅端）")
+        balance_before_result = aux_delta.get_balance(where="market")
+        
+        balance_before = balance_before_result.balance
+        
+        # 执行刷新购买（不打印日志）
+        buy_result = aux_delta.buy_in_market(
+            buyin=self.refresh_quantity,
+            maxin=self.max_quantity,
+            times=1,
+            buy=True,
+            loop=False
+        )
+        
+        # 获取刷新后余额（使用变化检测模式）
+        self.debug_log(LogLevel.INFO, f"🔍 获取刷新后余额（变化检测模式，基准: {balance_before}）...")
+        balance_after_result = aux_delta.get_balance(where="market", retry=10, change=balance_before)
+        
+        # 检查余额是否变化（get_balance_success已包含：识别到数字 且 与change不同）
+        if not balance_after_result.get_balance_success:
+            self.send_log(LogLevel.WARNING, f"⚠️ 余额未变化（重试{balance_after_result.get_balance_retry_attempt}次后仍为 {balance_after_result.balance}）")
             return False
+        
+        balance_after = balance_after_result.balance
+        
+        # 计算价格
+        price_diff = balance_before - balance_after
+        unit_price = price_diff / self.refresh_quantity
+        
+        # 将unit_price存入protocol
+        protocol.unit_price = unit_price
+        
+        # 保存OCR截图（已注释，调试完成）
+        # if hasattr(balance_before_result, 'screenshot') and balance_before_result.screenshot:
+        #     screenshot_dir = os.path.join(os.getcwd(), "log", "screenshots")
+        #     os.makedirs(screenshot_dir, exist_ok=True)
+        #     filename = f"{balance_before}.png"
+        #     filepath = os.path.join(screenshot_dir, filename)
+        #     balance_before_result.screenshot.save(filepath)
+        #     self.debug_log(LogLevel.INFO, f"💾 已保存刷新前余额截图: {filename}")
+        # 
+        # if hasattr(balance_after_result, 'screenshot') and balance_after_result.screenshot:
+        #     screenshot_dir = os.path.join(os.getcwd(), "log", "screenshots")
+        #     os.makedirs(screenshot_dir, exist_ok=True)
+        #     filename = f"{balance_after}.png"
+        #     filepath = os.path.join(screenshot_dir, filename)
+        #     balance_after_result.screenshot.save(filepath)
+        #     self.debug_log(LogLevel.INFO, f"💾 已保存刷新后余额截图: {filename}")
+        
+        # 更新统计
+        self.refresh_cost_total += price_diff
+        self.current_balance = balance_after
+        
+        # 记录刷新数据
+        self.refresh_cost_records.append({
+            'cycle': self.refresh_count,
+            'cost': price_diff,
+            'unit_price': unit_price,
+            'quantity': self.refresh_quantity,
+            'balance_before': balance_before,
+            'balance_after': balance_after
+        })
+        
+        # 判断价格状态并生成输出
+        if unit_price <= self.target_price and unit_price >= self.min_price_threshold:
+            action = "发现低价"
+            price_comparison = f"单价: {unit_price:.1f} <={self.target_price}"
+        elif unit_price < self.min_price_threshold:
+            action = "价格过低"
+            price_comparison = f"单价: {unit_price:.1f} <{self.min_price_threshold}"
+        else:
+            action = "价格过高"
+            price_comparison = f"单价: {unit_price:.1f} >{self.target_price}"
+        
+        # 普通模式：简洁输出
+        self.send_log(LogLevel.INFO, f"[第{self.refresh_count}轮] {price_comparison}，余额变化 {balance_before:,} → {balance_after:,}")
+        
+        # Debug模式：详细输出
+        self.debug_log(LogLevel.INFO, f"🔄 刷新详情: 单价 {unit_price:.1f}, 数量 {self.refresh_quantity}发, 花费 {price_diff:,.0f}, 余额 {balance_after:,}")
+        
+        self.record_price_data(balance_before, balance_after, unit_price, action)
+        
+        return True
+            
     
     @protocol_handler()
     def purchase_phase(self, protocol, unit_price):
         """购买阶段 - 切换到主端窗口并执行点击"""
-        try:
-            # 获取主端Delta实例
-            main_delta = self.get_main_delta()
-            if not main_delta:
-                self.send_log(LogLevel.ERROR, "❌ 无法获取主端Delta实例")
-                return False
+        # 获取主端Delta实例
+        main_delta = self.get_main_delta()
+        
+        # 切换到主端窗口
+        self.send_log(LogLevel.SUCCESS, f"💰 发现低价 {unit_price:.1f} ≤ {self.target_price}，切换到主端")
+        self.debug_log(LogLevel.INFO, "🔄 切换到主端窗口...")
+        
+        focus_result = main_delta.focus_window()  # 装饰器自动追踪
+        if not focus_result.success:
+            self.send_log(LogLevel.WARNING, "⚠️ 切换主端窗口失败")
+        
+        self.purchase_count += 1
+        self.send_log(LogLevel.INFO, "🖱️ 执行连续点击操作...")
+        
+        for i in range(1):
+            click_result = main_delta.click_ratio(0.8758, 0.7973)
             
-            # 切换到主端窗口
-            self.send_log(LogLevel.SUCCESS, f"💰 发现低价 {unit_price:.1f} ≤ {self.target_price}，切换到主端")
-            self.debug_log(LogLevel.INFO, "🔄 切换到主端窗口...")
+            if not click_result.success:
+                self.send_log(LogLevel.WARNING, f"⚠️ 第{i+1}次点击失败")
+            else:
+                self.debug_log(LogLevel.INFO, f"🖱️ 第{i+1}次点击完成")
             
-            if not main_delta.focus_window():
-                self.send_log(LogLevel.WARNING, "⚠️ 切换主端窗口失败")
-                return False
+            if i < 4:
+                time.sleep(0.001)
+        
+        self.send_log(LogLevel.INFO, "✅ 已完成5次点击")
+        
+        # 延迟3秒
+        time.sleep(3.0)
+        
+        # 第一次检查购买结果
+        self.send_log(LogLevel.INFO, "🔍 检查购买结果...")
+        error_check_result = main_delta.check_purchase_error((0.4679, 0.6938), (0.5532, 0.7170))
+        
+        if not error_check_result.has_purchase_error:
+            # 没有数字 → 购买成功
+            self.send_log(LogLevel.SUCCESS, "✅ 购买成功，进入仓库配装流程")
             
-            self.purchase_count += 1
-            self.send_log(LogLevel.INFO, "🖱️ 执行连续点击操作...")
-            
-            # 连续5次点击 (0.8758, 0.7973)
-            for i in range(5):
-                click_result = main_delta.click_ratio(0.8758, 0.7973)
-                # 自动合并（全局协议栈自动处理）
-                
-                if not click_result.success:
-                    self.send_log(LogLevel.WARNING, f"⚠️ 第{i+1}次点击失败")
-                else:
-                    self.debug_log(LogLevel.INFO, f"🖱️ 第{i+1}次点击完成")
-                
-                # 每次点击之间延迟0.001s
-                if i < 4:  # 最后一次点击后不需要延迟
-                    time.sleep(0.001)
-            
-            self.send_log(LogLevel.INFO, "✅ 已完成5次点击")
-            
-            # 延迟1秒
-            time.sleep(1.0)
-            
-            # 检查购买是否成功（识别区域是否有数字）
-            self.send_log(LogLevel.INFO, "🔍 检查购买结果...")
-            max_retry = 10
-            retry_count = 0
-            
-            while retry_count < max_retry:
-                # 识别区域 (0.4679, 0.6938) 到 (0.5532, 0.7170)
-                # 将比例坐标转换为屏幕绝对坐标
-                top_left = main_delta.ratio_to_screen_coords(0.4679, 0.6938)
-                bottom_right = main_delta.ratio_to_screen_coords(0.5532, 0.7170)
-                
-                if not top_left or not bottom_right:
-                    self.send_log(LogLevel.WARNING, "⚠️ 坐标转换失败")
-                    break
-                
-                # 计算截图区域
-                left = min(top_left[0], bottom_right[0])
-                top = min(top_left[1], bottom_right[1])
-                right = max(top_left[0], bottom_right[0])
-                bottom = max(top_left[1], bottom_right[1])
-                
-                # 截取区域
-                screenshot = pyautogui.screenshot(region=(left, top, right-left, bottom-top))
-                screenshot_array = np.array(screenshot)
-                
-                # OCR识别
-                results = main_delta.ocr.reader.readtext(
-                    screenshot_array,
-                    allowlist='1234567890',
-                    width_ths=0.7,
-                    height_ths=0.7,
-                    text_threshold=0.5,
-                    decoder='beamsearch'
-                )
-                
-                # 检查是否识别到数字
-                has_number = False
-                detected_text = ""
-                for bbox, text, conf in results:
-                    if text.strip():
-                        has_number = True
-                        detected_text += text.strip()
-                
-                if has_number:
-                    # 识别到数字，说明购买失败
-                    self.send_log(LogLevel.WARNING, f"⚠️ 检测到购买失败提示（数字: {detected_text}），按ESC重试...")
-                    pyautogui.press('esc')
-                    time.sleep(0.5)
-                    retry_count += 1
-                else:
-                    # 没有识别到数字，购买成功
-                    self.send_log(LogLevel.SUCCESS, f"✅ 购买成功，进入仓库配装流程")
-                    break
-            
-            # 如果重试次数用完（一直有数字），跳过仓库配装，直接执行最终步骤
-            if retry_count >= max_retry:
-                self.send_log(LogLevel.WARNING, "⚠️ 购买失败次数过多，跳过仓库配装，直接执行最终步骤")
-                final_result = self.execute_final_steps(main_delta)
-                if not final_result:
-                    self.send_log(LogLevel.ERROR, "❌ 最终步骤执行失败")
-                    return False
-                return True
-            
-            # 购买成功（没有数字），执行仓库配装流程
+            # 执行仓库配装流程
             warehouse_result = self.warehouse_equip_flow(main_delta, protocol)
-            
             if not warehouse_result:
                 self.send_log(LogLevel.ERROR, "❌ 仓库配装流程失败")
                 return False
             
-            self.send_log(LogLevel.SUCCESS, f"✅ 购买阶段完成")
+            self.send_log(LogLevel.SUCCESS, "✅ 仓库配装流程完成")
             
+            # 执行最终步骤
+            final_result = self.execute_final_steps(main_delta)
+            if not final_result:
+                self.send_log(LogLevel.ERROR, "❌ 最终步骤执行失败")
+                return False
+            
+            self.send_log(LogLevel.SUCCESS, "✅ 购买阶段完成")
             return True
+        else:
+            # 有数字 → 购买失败，进入重试循环
+            self.send_log(LogLevel.WARNING, f"⚠️ 检测到购买失败提示（数字: {error_check_result.error_text}），进入重试流程...")
             
-        except Exception as e:
-            self.send_log(LogLevel.ERROR, f"❌ 购买阶段异常: {e}")
+            max_retry = 10
+            for attempt in range(max_retry):
+                self.debug_log(LogLevel.INFO, f"🔍 第{attempt + 1}次重试检测...")
+                
+                error_check_result = main_delta.check_purchase_error((0.4679, 0.6938), (0.5532, 0.7170))
+                
+                if error_check_result.has_purchase_error:
+                    # 还有数字，按ESC
+                    self.debug_log(LogLevel.WARNING, f"⚠️ 仍有错误数字（{error_check_result.error_text}），按ESC...")
+                    pyautogui.press('esc')
+                    time.sleep(0.5)
+                else:
+                    # 数字消失了，按L键 + 点击位置，返回主循环
+                    self.send_log(LogLevel.INFO, "✅ 错误数字消失，按L键并点击位置，进入下个循环")
+                    pyautogui.press('l')
+                    time.sleep(0.5)
+                    main_delta.click_ratio(0.1000, 0.4300)
+                    return False
+            
+            # 10次都有数字，放弃，按L键 + 点击位置
+            self.send_log(LogLevel.WARNING, "⚠️ 重试10次仍有错误数字，放弃本次购买，进入下个循环")
+            pyautogui.press('l')
+            time.sleep(0.5)
+            main_delta.click_ratio(0.1000, 0.4300)
             return False
     
     def execute_final_steps(self, main_delta):
@@ -726,84 +671,30 @@ class DualPurchaseBehavior(Behavior):
     def warehouse_equip_flow(self, main_delta, parent_protocol):
         """仓库配装流程 - 循环直到价格 > 500"""
         while True:
-            # 跳转到仓库
+            # 第一步：跳转到仓库
             self.send_log(LogLevel.INFO, "📦 跳转到仓库...")
             main_delta.goto("仓库")
+            
+            # 第二步：延迟2秒后，点击位置 (0.1576, 0.9609) 三次，每次延迟0.5秒
+            time.sleep(2.0)
+            self.send_log(LogLevel.INFO, "🖱️ 开始点击位置 (0.1576, 0.9609) (3次)...")
+            for i in range(3):
+                main_delta.click_ratio(0.1576, 0.9609)
+                self.send_log(LogLevel.INFO, f"🖱️ 第{i+1}次点击")
+                time.sleep(0.5)
+            
+            # 第三步：跳转到出售
+            self.send_log(LogLevel.INFO, "💰 跳转到出售...")
+            main_delta.goto("出售")
             time.sleep(1.0)
             
-            # 点击 (0.3684, 0.5597)
-            self.send_log(LogLevel.INFO, "🖱️ 点击位置 (0.3684, 0.5597)...")
-            main_delta.click_ratio(0.3684, 0.5597)
-            time.sleep(0.5)
+            # 第四步：搜索前9格并出售
+            self.send_log(LogLevel.INFO, "🔍 开始搜索前9格并出售...")
+            main_delta.search_and_sell_first_9_items(price_difference=10)
+            self.send_log(LogLevel.SUCCESS, "✅ 前9格出售完成")
             
-            # 点击 (0.4500, 0.5160)
-            self.send_log(LogLevel.INFO, "🖱️ 点击位置 (0.4500, 0.5160)...")
-            main_delta.click_ratio(0.4500, 0.5160)
-            time.sleep(0.5)
-            
-            # 点击 (0.7330, 0.6589)
-            for i in range(5):
-                time.sleep(0.2)
-                main_delta.click_ratio(0.7330, 0.6589)
-            self.send_log(LogLevel.INFO, "🖱️ 点击位置 (0.7330, 0.6589)...")
-            main_delta.click_ratio(0.7330, 0.6589)
-            time.sleep(0.3)
-            main_delta.click_ratio(0.3000, 0.8200)
-            time.sleep(0.2)
-            
-            # 获取价格条数字
-            self.send_log(LogLevel.INFO, "💰 获取价格条数字...")
-            bar_price_result = main_delta.get_bar_price()
-            
-            if not bar_price_result.success:
-                self.send_log(LogLevel.WARNING, "⚠️ 获取价格条数字失败")
-                return False
-            
-            bar_price = int(bar_price_result.price)
-            self.send_log(LogLevel.INFO, f"💰 价格条数字: {bar_price}")
-            
-            # 如果价格 > 520，执行价格调整并退出
-            if bar_price > 520:
-                self.send_log(LogLevel.INFO, f"💰 价格 {bar_price} > 520，执行价格调整...")
-                time.sleep(0.2)
-                
-                # 点击 (0.7546, 0.5333)
-                self.send_log(LogLevel.INFO, "🖱️ 点击位置 (0.7546, 0.5333)...")
-                main_delta.click_ratio(0.7546, 0.5333)
-                time.sleep(0.2)
-                
-                # 点击 (0.6712, 0.6040)
-                self.send_log(LogLevel.INFO, "🖱️ 点击位置 (0.6712, 0.6040)...")
-                main_delta.click_ratio(0.6712, 0.6040)
-                time.sleep(0.5)
-                
-                # 选中全部文本并输入新价格
-                self.send_log(LogLevel.INFO, "⌨️ 选中全部文本 (Ctrl+A)...")
-                pyautogui.hotkey('ctrl', 'a')
-                time.sleep(0.1)
-                
-                new_price = bar_price - 10
-                self.send_log(LogLevel.INFO, f"⌨️ 输入新价格: {new_price}")
-                pyautogui.write(str(new_price))
-                time.sleep(0.5)
-                
-                # 点击确认按钮
-                self.send_log(LogLevel.INFO, "🖱️ 点击确认按钮 (0.6836, 0.6948)...")
-                for i in range(3):
-                    time.sleep(0.2) 
-                    main_delta.click_ratio(0.6836, 0.6948)
-                
-                self.send_log(LogLevel.SUCCESS, f"✅ 价格已调整为 {new_price}")
-                time.sleep(0.5)
-                
-                # 执行最终步骤
-                return self.execute_final_steps(main_delta)
-            else:
-                # 价格 <= 500，按ESC重试
-                self.send_log(LogLevel.INFO, f"💰 价格 {bar_price} ≤ 500，按ESC后重试...")
-                main_delta.press_key('esc')
-                time.sleep(1.0)
-                # 继续循环
+            # 仓库配装流程完成，退出循环
+            return True
     
     def monitor_balance_change(self):
         """监控余额变化 - 连续20次余额不变则认为仓库已满"""
@@ -900,7 +791,7 @@ class DualPurchaseBehavior(Behavior):
                     current_time
                 ])
             
-            self.send_log(LogLevel.DEBUG, f"📊 价格记录: 检测{self.detection_count}次, 单价{unit_price:.1f}, 动作{action}")
+            # 价格记录（不打印日志）
             
         except Exception as e:
             self.send_log(LogLevel.WARNING, f"⚠️ 价格记录写入失败: {e}")

@@ -6,19 +6,19 @@
     "click_count": 5
   },
   "SMB000X": {
-    "target_price": 440,
+    "target_price": 1270,
     "min_price_threshold": 200,
-    "refresh_delay": 0.0,
+    "refresh_delay": 1.0,
     "refresh_quantity": 31,
     "purchase_quantity": 200,
     "click_times": 10,
     "max_quantity": 200,
-    "work_start_hour": 0,
-    "work_start_minute": 0,
-    "work_end_hour": 23,
-    "work_end_minute": 59,
-    "auto_shutdown": false,
-    "debug_mode": 1
+    "work_start_hour": 3,
+    "work_start_minute": 15,
+    "work_end_hour": 5,
+    "work_end_minute": 15,
+    "auto_shutdown": true,
+    "debug_mode": 0
   },
   "SSS000X": {
     "ocr_check_interval": 0.12,
@@ -76,12 +76,16 @@
     "auto_shutdown": false
   },
   "DPB000X": {
-    "target_price": 480,
+    "target_price": 450,
     "min_price_threshold": 300,
-    "refresh_delay": 1.0,
+    "refresh_delay": 0.0,
     "work_start_time": "00:00",
     "work_end_time": "05:15",
     "auto_shutdown": false,
-    "debug_mode": 1
+    "debug_mode": 0
+  },
+  "TSWITCH": {
+    "switch_count": 5,
+    "debug_mode": 2
   }
 }

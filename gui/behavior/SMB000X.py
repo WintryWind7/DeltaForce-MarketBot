@@ -379,6 +379,9 @@ class PurchaseRefreshBehavior(Behavior):
                     for line in lines:
                         self.debug_log(LogLevel.INFO, line)
                 
+                # 保存余额截图(购买阶段结束)
+                self.save_balance_screenshot(refresh_result)
+                
                 return purchase_success
             else:
                 # 价格不合理，只执行了刷新阶段，打印刷新阶段的调用链
@@ -398,6 +401,8 @@ class PurchaseRefreshBehavior(Behavior):
                     self.send_log(LogLevel.WARNING, f"⚠️ 价格过低: {unit_price:.1f} < {self.min_price_threshold} (可能识别错误)")
                 else:
                     self.send_log(LogLevel.DEBUG, f"🔄 价格过高: {unit_price:.1f} > {self.target_price}")
+                    # 只在价格过高时保存余额截图(价格过低可能是识别错误,不保存)
+                    self.save_balance_screenshot(refresh_result)
                 
                 return False
                 
@@ -416,7 +421,7 @@ class PurchaseRefreshBehavior(Behavior):
             
             self.send_log(LogLevel.INFO, "💰 正在获取初始余额...")
             
-            balance_result = delta.get_balance(where="market", loop=True)
+            balance_result = delta.get_balance(where="market")
             if not balance_result.success:
                 self.send_log(LogLevel.ERROR, "❌ 无法获取初始余额")
                 return False
@@ -451,7 +456,7 @@ class PurchaseRefreshBehavior(Behavior):
             
             # 获取刷新前余额
             self.debug_log(LogLevel.INFO, f"🔍 开始第{self.refresh_count}次刷新操作")
-            balance_before_result = delta.get_balance(where="market", loop=True)
+            balance_before_result = delta.get_balance(where="market")
             if not balance_before_result.success:
                 self.send_log(LogLevel.WARNING, "⚠️ 无法获取刷新前余额")
                 self.debug_log(LogLevel.ERROR, "🔍 获取刷新前余额失败")
@@ -478,35 +483,18 @@ class PurchaseRefreshBehavior(Behavior):
                 self.debug_log(LogLevel.ERROR, f"🔍 刷新购买失败: {self.refresh_quantity}发")
                 return False
             
-            # 获取刷新后余额（带重试机制，处理余额延迟更新）
-            balance_after = None
-            max_retries = 6
-            self.sleep(0.15)
-            for attempt in range(max_retries):
-                self.debug_log(LogLevel.INFO, f"🔍 第{attempt + 1}次获取刷新后余额...")
-                
-                balance_after_result = delta.get_balance(where="market", loop=True)
-                # 自动合并（全局协议栈自动处理）
-                
-                if not balance_after_result.success:
-                    self.send_log(LogLevel.WARNING, f"⚠️ 第{attempt + 1}次刷新后余额获取失败")
-                    continue
-                
-                current_balance = balance_after_result.balance
-                balance_change = balance_before - current_balance
-                
-                # 如果余额有变化（差价不为0），说明购买生效了
-                if balance_change != 0:
-                    self.debug_log(LogLevel.SUCCESS, f"🔍 第{attempt + 1}次检测成功：余额变化 {balance_change}")
-                    balance_after = current_balance
-                    break
-                else:
-                    self.debug_log(LogLevel.WARNING, f"🔍 第{attempt + 1}次余额未变化: {balance_before} == {current_balance}")
-                    balance_after = current_balance  # 保存最后一次的结果
+            # 获取刷新后余额（使用变化检测模式）
+            self.debug_log(LogLevel.INFO, f"🔍 获取刷新后余额（变化检测模式，基准: {balance_before}）...")
+            balance_after_result = delta.get_balance(where="market", retry=10, change=balance_before)
+            # 自动合并（全局协议栈自动处理）
             
-            if balance_after is None:
-                self.send_log(LogLevel.WARNING, "⚠️ 无法获取刷新后余额")
+            # 检查余额是否变化（get_balance_success已包含：识别到数字 且 与change不同）
+            if not balance_after_result.get_balance_success:
+                self.send_log(LogLevel.WARNING, f"⚠️ 余额未变化（重试{balance_after_result.get_balance_retry_attempt}次后仍为 {balance_after_result.balance}）")
                 return False
+            
+            balance_after = balance_after_result.balance
+            self.debug_log(LogLevel.SUCCESS, f"🔍 第{balance_after_result.get_balance_retry_attempt}次检测成功：余额变化 {balance_before} → {balance_after}")
             
             # 计算价格
             price_diff = balance_before - balance_after
@@ -566,7 +554,7 @@ class PurchaseRefreshBehavior(Behavior):
             self.send_log(LogLevel.SUCCESS, f"💰 发现低价 {unit_price:.1f} ≤ {self.target_price}, 开始批量购买: {self.purchase_quantity}发×{self.click_times}次 (参数: buyin={self.purchase_quantity}, maxin={self.max_quantity})")
             
             # 获取购买前余额
-            balance_before_result = delta.get_balance(where="market", loop=True)
+            balance_before_result = delta.get_balance(where="market")
             if not balance_before_result.success:
                 self.send_log(LogLevel.WARNING, "⚠️ 无法获取购买前余额")
                 return False
@@ -590,7 +578,7 @@ class PurchaseRefreshBehavior(Behavior):
                 return False
                 
             # 获取购买后余额（简单一次检测）
-            balance_after_result = delta.get_balance(where="market", loop=True)
+            balance_after_result = delta.get_balance(where="market")
             if not balance_after_result.success:
                 self.send_log(LogLevel.WARNING, "⚠️ 无法获取购买后余额")
                 return False
@@ -705,6 +693,31 @@ class PurchaseRefreshBehavior(Behavior):
         except Exception as e:
             self.send_log(LogLevel.WARNING, f"⚠️ 价格记录初始化失败: {e}")
             self.csv_file_path = None
+    
+    def save_balance_screenshot(self, refresh_result):
+        """保存余额截图到 log/balance_images/"""
+        try:
+            # 从 refresh_result 中获取 balance_after (刷新后的余额)
+            balance = getattr(refresh_result, 'balance', None)
+            screenshot = getattr(refresh_result, 'screenshot_image', None)
+            
+            if balance is None or screenshot is None:
+                return
+            
+            # 创建目录
+            screenshot_dir = os.path.join(os.getcwd(), "log", "balance_images")
+            os.makedirs(screenshot_dir, exist_ok=True)
+            
+            # 文件名: 余额.png
+            filename = f"{balance}.png"
+            filepath = os.path.join(screenshot_dir, filename)
+            
+            # 保存截图
+            screenshot.save(filepath)
+            self.debug_log(LogLevel.INFO, f"💾 已保存余额截图: {filename}")
+            
+        except Exception as e:
+            self.debug_log(LogLevel.WARNING, f"⚠️ 保存余额截图失败: {e}")
     
     def record_price_data(self, balance_before, balance_after, unit_price, action):
         """记录价格数据到CSV文件"""
