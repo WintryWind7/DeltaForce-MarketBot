@@ -7,11 +7,11 @@
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QPushButton, QTextEdit, QStatusBar,
-    QMenuBar, QMenu, QStackedWidget, QFrame, QGridLayout,
+    QStackedWidget, QFrame, QGridLayout,
     QSpinBox, QDoubleSpinBox, QScrollArea, QFormLayout, QLineEdit
 )
 from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QIcon, QFont, QAction, QColor
+from PySide6.QtGui import QIcon, QFont, QColor, QWheelEvent
 
 import sys
 import os
@@ -108,9 +108,6 @@ class MainWindow(QMainWindow):
         # 创建右侧内容区域
         self.create_main_content(main_layout)
         
-        # 创建菜单栏
-        self.create_menu_bar()
-        
         # 创建状态栏
         self.create_status_bar()
         
@@ -204,6 +201,30 @@ class MainWindow(QMainWindow):
         # 添加弹性空间
         sidebar_layout.addStretch()
         
+        # 刷新按钮（底部）
+        refresh_btn = QPushButton("🔄 刷新")
+        refresh_btn.clicked.connect(self.refresh_all_content)
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                border: none;
+                color: white;
+                padding: 12px;
+                text-align: center;
+                font-size: 13px;
+                font-weight: bold;
+                margin: 5px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #2ecc71;
+            }
+            QPushButton:pressed {
+                background-color: #229954;
+            }
+        """)
+        sidebar_layout.addWidget(refresh_btn)
+        
         parent_layout.addWidget(sidebar_widget)
         
     def create_main_content(self, parent_layout):
@@ -246,9 +267,36 @@ class MainWindow(QMainWindow):
         title.setFont(QFont("", 18, QFont.Bold))
         layout.addWidget(title)
         
+        # 创建自定义滚动区域
+        scroll_area = self.create_smooth_scroll_area()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                background-color: #f0f0f0;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #c0c0c0;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #a0a0a0;
+            }
+        """)
+        
         # 行为列表容器
         actions_container = QWidget()
         actions_layout = QVBoxLayout(actions_container)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
         
         # 从行为管理器获取行为列表
         behavior_list = self.behavior_manager.get_behavior_list()
@@ -270,6 +318,9 @@ class MainWindow(QMainWindow):
                     "DMR000X": "🎯",  # 双端刷新购买
                     "SMB000X": "💰",  # 单端购买刷新
                     "SSS000X": "🎯",  # 单端枪皮
+                    "SPR000X": "💎",  # 单端价格刷新
+                    "SPR919G": "💎",  # 单端价格刷新919G
+                    "DMB000X": "🔄",  # 双端满仓
                     "test_basic_behavior": "🔧",
                     "custom_behavior": "📝"
                 }
@@ -287,8 +338,14 @@ class MainWindow(QMainWindow):
                 action_card = self.create_action_card(action_data)
                 actions_layout.addWidget(action_card)
         
-        layout.addWidget(actions_container)
-        layout.addStretch()
+        # 添加弹性空间到容器底部
+        actions_layout.addStretch()
+        
+        # 将容器设置到滚动区域
+        scroll_area.setWidget(actions_container)
+        
+        # 将滚动区域添加到主布局
+        layout.addWidget(scroll_area)
         
         self.action_stacked.addWidget(selection_page)
         
@@ -296,6 +353,9 @@ class MainWindow(QMainWindow):
         """创建行为卡片"""
         card = QFrame()
         card.setFrameStyle(QFrame.Box)
+        # 设置固定高度，防止被压缩
+        card.setFixedHeight(120)
+        card.setMinimumWidth(500)
         card.setStyleSheet("""
             QFrame {
                 border: 2px solid #ddd;
@@ -317,10 +377,10 @@ class MainWindow(QMainWindow):
         
         # 左侧图标
         icon_label = QLabel(action["icon"])
-        icon_label.setFont(QFont("", 20))
-        icon_label.setFixedSize(50, 50)
+        icon_label.setFont(QFont("", 28))
+        icon_label.setFixedSize(70, 70)
         icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setStyleSheet("border: none; background-color: #ecf0f1; border-radius: 25px;")
+        icon_label.setStyleSheet("border: none; background-color: #ecf0f1; border-radius: 35px;")
         layout.addWidget(icon_label)
         
         # 右侧信息
@@ -334,7 +394,7 @@ class MainWindow(QMainWindow):
         title_row_layout.setSpacing(8)
         
         name_label = QLabel(action["name"])
-        name_label.setFont(QFont("Microsoft YaHei", 12, QFont.Bold))
+        name_label.setFont(QFont("Microsoft YaHei", 16, QFont.Bold))
         title_row_layout.addWidget(name_label)
         
         # 添加标签
@@ -345,15 +405,15 @@ class MainWindow(QMainWindow):
                     QLabel {
                         background-color: #3498db;
                         color: white;
-                        border-radius: 8px;
-                        padding: 4px 8px;
-                        font-size: 12px;
+                        border-radius: 10px;
+                        padding: 6px 12px;
+                        font-size: 14px;
                         font-weight: bold;
                         margin: 0px 4px;
                     }
                 """)
-                tag_label.setFont(QFont("Microsoft YaHei", 12, QFont.Bold))
-                tag_label.setFixedHeight(24)
+                tag_label.setFont(QFont("Microsoft YaHei", 14, QFont.Bold))
+                tag_label.setFixedHeight(32)
                 tag_label.setAlignment(Qt.AlignCenter)
                 title_row_layout.addWidget(tag_label)
         
@@ -361,8 +421,9 @@ class MainWindow(QMainWindow):
         info_layout.addLayout(title_row_layout)
         
         desc_label = QLabel(action["description"])
-        desc_label.setStyleSheet("color: #666; font-size: 10px;")
+        desc_label.setStyleSheet("color: #666; font-size: 14px;")
         desc_label.setWordWrap(True)
+        desc_label.setFont(QFont("Microsoft YaHei", 14))
         info_layout.addWidget(desc_label)
         
         layout.addLayout(info_layout)
@@ -479,7 +540,58 @@ class MainWindow(QMainWindow):
             return config_info
         
         module = behavior_info['module']
-        custom_config = getattr(module, 'BEHAVIOR_INFO', {}).get('custom_config', {})
+        
+        # 每次都从磁盘重新加载模块，支持热更新
+        custom_config = {}
+        
+        try:
+            # 动态重新加载behavior模块
+            import importlib.util
+            import os
+            
+            behavior_file = f"gui/behavior/{behavior['id']}.py"
+            if os.path.exists(behavior_file):
+                # 重新加载模块
+                spec = importlib.util.spec_from_file_location(behavior['id'], behavior_file)
+                fresh_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(fresh_module)
+                
+                # 尝试获取Behavior类并调用get_ui_config
+                behavior_class = None
+                if hasattr(fresh_module, 'get_behavior_class'):
+                    behavior_class = fresh_module.get_behavior_class()
+                else:
+                    # 查找继承自Behavior的类
+                    for name in dir(fresh_module):
+                        obj = getattr(fresh_module, name)
+                        if (isinstance(obj, type) and 
+                            hasattr(obj, '__bases__') and
+                            any('Behavior' in str(base) for base in obj.__bases__)):
+                            behavior_class = obj
+                            break
+                
+                if behavior_class and hasattr(behavior_class, 'get_ui_config'):
+                    try:
+                        custom_config = behavior_class.get_ui_config()
+                        print(f"✅ 从磁盘重新加载{behavior['id']}的UI配置")
+                    except Exception as e:
+                        print(f"⚠️ 获取{behavior['id']}的UI配置失败: {e}")
+                        custom_config = {}
+                
+                # 如果新方式失败，回退到旧的BEHAVIOR_INFO方式
+                if not custom_config:
+                    custom_config = getattr(fresh_module, 'BEHAVIOR_INFO', {}).get('custom_config', {})
+                    if custom_config:
+                        print(f"✅ 使用{behavior['id']}的BEHAVIOR_INFO配置")
+            else:
+                print(f"❌ 行为文件不存在: {behavior_file}")
+                
+        except Exception as e:
+            print(f"❌ 重新加载{behavior['id']}失败: {e}")
+            # 如果重新加载失败，回退到缓存的模块
+            if 'module' in behavior_info:
+                module = behavior_info['module']
+                custom_config = getattr(module, 'BEHAVIOR_INFO', {}).get('custom_config', {})
         
         if not custom_config:
             # 没有自定义配置，显示默认提示
@@ -509,7 +621,11 @@ class MainWindow(QMainWindow):
             self.config_widgets[behavior['id']] = {}
         
         # 为每个配置参数创建控件
+        processed_params = set()  # 记录已处理的参数
         for param_name, param_config in custom_config.items():
+            # 跳过已处理的参数（如分钟参数会在小时参数处理时一起创建）
+            if param_name in processed_params:
+                continue
             param_type = param_config.get('type', 'int')
             label_text = param_config.get('label', param_name)
             default_value = param_config.get('default', 0)
@@ -520,12 +636,192 @@ class MainWindow(QMainWindow):
                 param_name in self.saved_configs[behavior['id']]):
                 default_value = self.saved_configs[behavior['id']][param_name]
             
+            # 特殊处理：时间参数（小时和分钟组合）
+            if param_name.endswith('_hour'):
+                minute_param_name = param_name.replace('_hour', '_minute')
+                if minute_param_name in custom_config:
+                    # 标记分钟参数已处理
+                    processed_params.add(minute_param_name)
+                    
+                    # 创建时间组合控件
+                    time_label_text = label_text.replace('-时', '')  # 移除"-时"后缀
+                    label = QLabel(f"{time_label_text}:")
+                    label.setStyleSheet("font-weight: bold; color: #2c3e50;")
+                    
+                    # 创建水平布局容纳小时和分钟输入框
+                    time_container = QWidget()
+                    time_layout = QHBoxLayout(time_container)
+                    time_layout.setContentsMargins(0, 0, 0, 0)
+                    time_layout.setSpacing(5)
+                    
+                    # 创建小时输入框
+                    hour_widget = NoWheelSpinBox()
+                    hour_min = param_config.get('min', 0)
+                    hour_max = param_config.get('max', 23)
+                    hour_widget.setMinimum(hour_min)
+                    hour_widget.setMaximum(hour_max)
+                    hour_widget.setValue(int(default_value))
+                    hour_widget.setStyleSheet("""
+                        QSpinBox {
+                            padding: 5px;
+                            border: 1px solid #bdc3c7;
+                            border-radius: 3px;
+                            font-size: 12px;
+                            min-width: 50px;
+                        }
+                        QSpinBox:focus {
+                            border-color: #3498db;
+                        }
+                    """)
+                    
+                    # 创建分钟输入框
+                    minute_config = custom_config[minute_param_name]
+                    minute_default = minute_config.get('default', 0)
+                    if (behavior['id'] in self.saved_configs and 
+                        minute_param_name in self.saved_configs[behavior['id']]):
+                        minute_default = self.saved_configs[behavior['id']][minute_param_name]
+                    
+                    minute_widget = NoWheelSpinBox()
+                    minute_min = minute_config.get('min', 0)
+                    minute_max = minute_config.get('max', 59)
+                    minute_widget.setMinimum(minute_min)
+                    minute_widget.setMaximum(minute_max)
+                    minute_widget.setValue(int(minute_default))
+                    minute_widget.setStyleSheet("""
+                        QSpinBox {
+                            padding: 5px;
+                            border: 1px solid #bdc3c7;
+                            border-radius: 3px;
+                            font-size: 12px;
+                            min-width: 50px;
+                        }
+                        QSpinBox:focus {
+                            border-color: #3498db;
+                        }
+                    """)
+                    
+                    # 添加到布局
+                    time_layout.addWidget(hour_widget)
+                    time_layout.addWidget(QLabel(":"))
+                    time_layout.addWidget(minute_widget)
+                    time_layout.addStretch()
+                    
+                    # 存储控件引用
+                    self.config_widgets[behavior['id']][param_name] = hour_widget
+                    self.config_widgets[behavior['id']][minute_param_name] = minute_widget
+                    
+                    # 连接信号
+                    hour_widget.valueChanged.connect(self.on_config_changed)
+                    minute_widget.valueChanged.connect(self.on_config_changed)
+                    
+                    # 特殊处理：24小时自动转为23:59
+                    def handle_hour_change(value, h_widget=hour_widget, m_widget=minute_widget):
+                        if value == 24:
+                            h_widget.setValue(23)
+                            m_widget.setValue(59)
+                    hour_widget.valueChanged.connect(handle_hour_change)
+                    
+                    # 添加到表单
+                    form_layout.addRow(label, time_container)
+                    continue  # 跳过后续的普通控件创建逻辑
+            
             # 创建标签
             label = QLabel(f"{label_text}:")
             label.setStyleSheet("font-weight: bold; color: #2c3e50;")
             
             # 根据类型创建对应的控件
-            if param_type == 'int':
+            if param_type == 'int' and param_name == 'debug_mode':
+                # 特殊处理：debug_mode 使用循环按钮（0→1→2→0）
+                widget = QPushButton()
+                # 设置初始值
+                try:
+                    int_value = int(default_value) if default_value is not None else param_config.get('default', 0)
+                    # 确保值在有效范围内
+                    int_value = max(0, min(2, int_value))
+                except (ValueError, TypeError):
+                    int_value = 0
+                
+                # 存储当前值（使用对象属性）
+                widget.current_value = int_value
+                
+                # 更新按钮文本和样式
+                def make_update_debug_button_style(btn):
+                    def update_style(value):
+                        if value == 0:
+                            btn.setText("✗ 关闭")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #95a5a6;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #7f8c8d;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #707b7c;
+                                }
+                            """)
+                        elif value == 1:
+                            btn.setText("🔍 简化Debug")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #3498db;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #2980b9;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #21618c;
+                                }
+                            """)
+                        elif value == 2:
+                            btn.setText("🔬 详细Debug")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #9b59b6;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #8e44ad;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #7d3c98;
+                                }
+                            """)
+                    return update_style
+                
+                # 点击时循环切换值
+                def make_toggle_debug_mode(btn, update_func):
+                    def toggle():
+                        # 循环：0→1→2→0
+                        btn.current_value = (btn.current_value + 1) % 3
+                        update_func(btn.current_value)
+                        # 触发配置变化信号
+                        self.on_config_changed()
+                    return toggle
+                
+                # 连接信号
+                update_func = make_update_debug_button_style(widget)
+                widget.clicked.connect(make_toggle_debug_mode(widget, update_func))
+                # 初始化样式
+                update_func(int_value)
+            elif param_type == 'int':
                 widget = NoWheelSpinBox()
                 # 取消数值范围限制，允许用户自由输入
                 widget.setMinimum(-2147483648)  # 32位整数最小值
@@ -591,12 +887,70 @@ class MainWindow(QMainWindow):
                         border-color: #3498db;
                     }
                 """)
+            elif param_type == 'bool':
+                # 使用按钮形式的布尔控件
+                widget = QPushButton()
+                # 设置初始值
+                bool_value = bool(default_value) if default_value is not None else param_config.get('default', False)
+                widget.setCheckable(True)  # 设置为可切换按钮
+                widget.setChecked(bool_value)
+                
+                # 更新按钮文本和样式（使用lambda捕获当前widget）
+                def make_update_button_style(btn):
+                    def update_style(checked):
+                        if checked:
+                            btn.setText("✓ 已启用")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #27ae60;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #229954;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #1e8449;
+                                }
+                            """)
+                        else:
+                            btn.setText("✗ 已禁用")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background-color: #e74c3c;
+                                    color: white;
+                                    border: none;
+                                    padding: 8px 16px;
+                                    border-radius: 4px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                }
+                                QPushButton:hover {
+                                    background-color: #c0392b;
+                                }
+                                QPushButton:pressed {
+                                    background-color: #a93226;
+                                }
+                            """)
+                    return update_style
+                
+                # 连接信号
+                update_func = make_update_button_style(widget)
+                widget.toggled.connect(update_func)
+                # 初始化样式
+                update_func(bool_value)
             else:
                 # 默认使用整数控件
                 widget = NoWheelSpinBox()
-                # 取消数值范围限制，允许用户自由输入
-                widget.setMinimum(-2147483648)  # 32位整数最小值
-                widget.setMaximum(2147483647)   # 32位整数最大值
+                # 设置数值范围（如果配置中有指定）
+                min_value = param_config.get('min', -2147483648)
+                max_value = param_config.get('max', 2147483647)
+                widget.setMinimum(min_value)
+                widget.setMaximum(max_value)
                 # 确保default_value是整数类型
                 try:
                     int_value = int(default_value)
@@ -616,6 +970,8 @@ class MainWindow(QMainWindow):
                 widget.valueChanged.connect(self.on_config_changed)
             elif isinstance(widget, QLineEdit):
                 widget.textChanged.connect(self.on_config_changed)
+            elif isinstance(widget, QPushButton) and widget.isCheckable():
+                widget.toggled.connect(self.on_config_changed)
             
             # 创建描述标签
             if description:
@@ -650,6 +1006,12 @@ class MainWindow(QMainWindow):
                     config[param_name] = widget.value()
                 elif isinstance(widget, QLineEdit):
                     config[param_name] = widget.text()
+                elif isinstance(widget, QPushButton):
+                    if widget.isCheckable():
+                        config[param_name] = widget.isChecked()
+                    elif hasattr(widget, 'current_value'):
+                        # debug_mode 循环按钮
+                        config[param_name] = widget.current_value
         
         return config
     
@@ -690,6 +1052,12 @@ class MainWindow(QMainWindow):
                         behavior_config[param_name] = widget.value()
                     elif isinstance(widget, QLineEdit):
                         behavior_config[param_name] = widget.text()
+                    elif isinstance(widget, QPushButton):
+                        if widget.isCheckable():
+                            behavior_config[param_name] = widget.isChecked()
+                        elif hasattr(widget, 'current_value'):
+                            # debug_mode 循环按钮
+                            behavior_config[param_name] = widget.current_value
                 
                 if behavior_config:  # 只保存非空配置
                     existing_configs[behavior_id] = behavior_config
@@ -731,6 +1099,71 @@ class MainWindow(QMainWindow):
                             str_value = str(saved_value)
                             widget.setText(str_value)
                             applied_count += 1
+                        elif isinstance(widget, QPushButton):
+                            if widget.isCheckable():
+                                # 布尔按钮控件需要转换为bool
+                                # 正确处理字符串 "True"/"False" 和布尔值
+                                if isinstance(saved_value, bool):
+                                    bool_value = saved_value
+                                elif isinstance(saved_value, str):
+                                    bool_value = saved_value.lower() in ('true', '1', 'yes')
+                                else:
+                                    bool_value = bool(saved_value)
+                                widget.setChecked(bool_value)
+                                applied_count += 1
+                            elif hasattr(widget, 'current_value'):
+                                # debug_mode 循环按钮（0→1→2→0）
+                                int_value = int(saved_value)
+                                int_value = max(0, min(2, int_value))  # 确保在 0-2 范围内
+                                widget.current_value = int_value
+                                # 查找更新函数并调用
+                                # 需要触发样式更新
+                                if int_value == 0:
+                                    widget.setText("✗ 关闭")
+                                    widget.setStyleSheet("""
+                                        QPushButton {
+                                            background-color: #95a5a6;
+                                            color: white;
+                                            border: none;
+                                            padding: 8px 16px;
+                                            border-radius: 4px;
+                                            font-size: 12px;
+                                            font-weight: bold;
+                                        }
+                                        QPushButton:hover { background-color: #7f8c8d; }
+                                        QPushButton:pressed { background-color: #707b7c; }
+                                    """)
+                                elif int_value == 1:
+                                    widget.setText("🔍 简化Debug")
+                                    widget.setStyleSheet("""
+                                        QPushButton {
+                                            background-color: #3498db;
+                                            color: white;
+                                            border: none;
+                                            padding: 8px 16px;
+                                            border-radius: 4px;
+                                            font-size: 12px;
+                                            font-weight: bold;
+                                        }
+                                        QPushButton:hover { background-color: #2980b9; }
+                                        QPushButton:pressed { background-color: #21618c; }
+                                    """)
+                                elif int_value == 2:
+                                    widget.setText("🔬 详细Debug")
+                                    widget.setStyleSheet("""
+                                        QPushButton {
+                                            background-color: #9b59b6;
+                                            color: white;
+                                            border: none;
+                                            padding: 8px 16px;
+                                            border-radius: 4px;
+                                            font-size: 12px;
+                                            font-weight: bold;
+                                        }
+                                        QPushButton:hover { background-color: #8e44ad; }
+                                        QPushButton:pressed { background-color: #7d3c98; }
+                                    """)
+                                applied_count += 1
                     except (ValueError, TypeError, Exception) as e:
                         print(f"⚠️ 应用配置 {param_name}={saved_value} 失败: {e}")
             
@@ -899,6 +1332,14 @@ class MainWindow(QMainWindow):
         control_layout.addStretch()
         layout.addLayout(control_layout)
         
+        # 创建执行记录页面的堆叠窗口
+        self.history_stacked = QStackedWidget()
+        
+        # 创建任务列表页面
+        list_page = QWidget()
+        list_layout = QVBoxLayout(list_page)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        
         # 创建滚动区域
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -911,17 +1352,77 @@ class MainWindow(QMainWindow):
         self.task_history_layout.setContentsMargins(10, 10, 10, 10)
         
         scroll_area.setWidget(self.task_history_container)
-        layout.addWidget(scroll_area)
+        list_layout.addWidget(scroll_area)
         
         # 统计信息
         self.history_stats_label = QLabel("统计信息将在此显示")
         self.history_stats_label.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 5px;")
-        layout.addWidget(self.history_stats_label)
+        list_layout.addWidget(self.history_stats_label)
+        
+        self.history_stacked.addWidget(list_page)
+        
+        # 创建任务详情页面
+        self.create_task_detail_page()
+        
+        layout.addWidget(self.history_stacked)
         
         self.stacked_widget.addWidget(history_page)
         
         # 初始加载数据
         self.refresh_task_history()
+    
+    def create_task_detail_page(self):
+        """创建任务详情页面"""
+        detail_page = QWidget()
+        layout = QVBoxLayout(detail_page)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # 顶部导航区域
+        nav_layout = QHBoxLayout()
+        
+        # 返回按钮
+        back_btn = QPushButton("← 返回列表")
+        back_btn.clicked.connect(lambda: self.history_stacked.setCurrentIndex(0))
+        back_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007acc;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #005a9e;
+            }
+        """)
+        nav_layout.addWidget(back_btn)
+        
+        # 任务标题
+        self.detail_title_label = QLabel("任务详情")
+        self.detail_title_label.setFont(QFont("", 16, QFont.Bold))
+        nav_layout.addWidget(self.detail_title_label)
+        
+        nav_layout.addStretch()
+        layout.addLayout(nav_layout)
+        
+        # 创建日志样式的文本显示区域
+        self.task_detail_text = QTextEdit()
+        self.task_detail_text.setReadOnly(True)
+        self.task_detail_text.setFont(QFont("Consolas", 10))
+        self.task_detail_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                border: 1px solid #333;
+                border-radius: 4px;
+                padding: 10px;
+                font-family: 'Consolas', 'Monaco', monospace;
+            }
+        """)
+        layout.addWidget(self.task_detail_text)
+        
+        self.history_stacked.addWidget(detail_page)
     
     def refresh_task_history(self):
         """刷新执行记录"""
@@ -1022,16 +1523,30 @@ class MainWindow(QMainWindow):
         
         layout.addLayout(title_layout)
         
-        # 摘要统计数据
+        # 摘要统计数据 - 适应新的LogManager结构
         statistics = task.get('statistics', {})
         summary_parts = []
         
+        # 日志统计
+        message_count = statistics.get('message_count', 0)
+        if message_count > 0:
+            summary_parts.append(f"日志: {message_count}条")
+        
+        # 业务统计 - 新的LogManager会将这些数据放在statistics根级别
         if statistics.get('refresh_count', 0) > 0:
             summary_parts.append(f"刷新: {statistics['refresh_count']}")
         if statistics.get('purchase_count', 0) > 0:
             summary_parts.append(f"购买: {statistics['purchase_count']}")
         if statistics.get('low_price_found_count', 0) > 0:
             summary_parts.append(f"低价: {statistics['low_price_found_count']}")
+        
+        # 余额变化
+        initial_balance = statistics.get('initial_balance')
+        current_balance = statistics.get('current_balance')
+        if initial_balance and current_balance:
+            balance_change = current_balance - initial_balance
+            if balance_change != 0:
+                summary_parts.append(f"余额变化: {balance_change:+,.0f}")
         total_cost = statistics.get('total_cost', 0)
         if total_cost and isinstance(total_cost, (int, float)) and total_cost != 0:
             summary_parts.append(f"花费: {total_cost:,}")
@@ -1046,10 +1561,147 @@ class MainWindow(QMainWindow):
         summary_label.setWordWrap(True)
         layout.addWidget(summary_label)
         
-        # 点击事件
-        card.mousePressEvent = lambda event: self.show_task_details(task)
+        # 点击事件 - 跳转到详情页面
+        card.mousePressEvent = lambda event: self.show_task_detail_page(task)
         
         return card
+    
+    def show_task_detail_page(self, task):
+        """显示任务详情页面"""
+        # 更新详情页面内容
+        self.update_task_detail_content(task)
+        
+        # 切换到详情页面
+        self.history_stacked.setCurrentIndex(1)
+    
+    def update_task_detail_content(self, task):
+        """更新任务详情内容"""
+        # 更新标题
+        task_id = task.get('task_id', '未知任务')
+        self.detail_title_label.setText(f"任务详情 - {task_id}")
+        
+        # 构建详情内容
+        details = self.build_task_detail_text(task)
+        
+        # 设置到文本区域
+        self.task_detail_text.setPlainText(details)
+        
+        # 滚动到顶部
+        cursor = self.task_detail_text.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        self.task_detail_text.setTextCursor(cursor)
+    
+    def build_task_detail_text(self, task):
+        """构建任务详情文本"""
+        details = []
+        
+        # 基本信息
+        details.append("=" * 80)
+        details.append("📋 任务基本信息")
+        details.append("=" * 80)
+        details.append(f"任务ID: {task.get('task_id', '未知')}")
+        details.append(f"脚本ID: {task.get('script_id', '未知')}")
+        details.append(f"开始时间: {task.get('start_time', '未知')}")
+        details.append(f"结束时间: {task.get('end_time', '未知')}")
+        details.append(f"运行时长: {task.get('duration', 0):.1f}秒")
+        details.append(f"状态: {task.get('status', '未知')}")
+        details.append("")
+        
+        # 摘要信息 - 紧跟在基本信息后面
+        summary = task.get('summary', '')
+        if summary:
+            details.append("=" * 80)
+            details.append("📝 执行摘要")
+            details.append("=" * 80)
+            details.append(summary)
+            details.append("")
+        
+        # 统计数据
+        statistics = task.get('statistics', {})
+        if statistics:
+            details.append("=" * 80)
+            details.append("📊 统计数据")
+            details.append("=" * 80)
+            
+            # 日志统计
+            message_count = statistics.get('message_count', 0)
+            if message_count > 0:
+                details.append("📝 日志统计:")
+                details.append(f"  总日志数: {message_count}")
+                details.append(f"  成功日志: {statistics.get('success_count', 0)}")
+                details.append(f"  警告日志: {statistics.get('warning_count', 0)}")
+                details.append(f"  错误日志: {statistics.get('error_count', 0)}")
+                details.append(f"  信息日志: {statistics.get('info_count', 0)}")
+                details.append(f"  调试日志: {statistics.get('debug_count', 0)}")
+                details.append("")
+            
+            # 业务统计
+            details.append("📈 业务统计:")
+            refresh_count = statistics.get('refresh_count', 0)
+            if refresh_count > 0:
+                details.append(f"  刷新次数: {refresh_count}")
+            
+            purchase_count = statistics.get('purchase_count', 0)
+            if purchase_count > 0:
+                details.append(f"  购买次数: {purchase_count}")
+            
+            # 余额信息
+            initial_balance = statistics.get('initial_balance')
+            current_balance = statistics.get('current_balance')
+            if initial_balance is not None and isinstance(initial_balance, (int, float)):
+                details.append(f"  初始余额: {initial_balance:,}")
+            if current_balance is not None and isinstance(current_balance, (int, float)):
+                details.append(f"  最终余额: {current_balance:,}")
+                if initial_balance is not None:
+                    balance_change = current_balance - initial_balance
+                    details.append(f"  余额变化: {balance_change:+,}")
+            
+            # 其他业务数据
+            target_price = statistics.get('target_price')
+            if target_price is not None:
+                details.append(f"  目标价格: {target_price}")
+            
+            unit_price = statistics.get('unit_price')
+            if unit_price is not None:
+                details.append(f"  最后单价: {unit_price:.1f}")
+            
+            details.append("")
+        
+        # 详细日志记录 - 放在最下面
+        detailed_logs = task.get('detailed_logs', [])
+        details.append("=" * 80)
+        details.append("📋 详细日志记录")
+        details.append("=" * 80)
+        
+        if detailed_logs:
+            details.append(f"共 {len(detailed_logs)} 条日志记录:")
+            details.append("")
+            
+            for i, log_entry in enumerate(detailed_logs, 1):
+                timestamp = log_entry.get('timestamp', '')
+                level = log_entry.get('level', 'INFO')
+                message = log_entry.get('message', '')
+                
+                # 根据日志级别设置前缀
+                level_prefix = {
+                    'DEBUG': '🔍',
+                    'INFO': 'ℹ️',
+                    'WARNING': '⚠️',
+                    'ERROR': '❌',
+                    'SUCCESS': '✅'
+                }.get(level, '📝')
+                
+                details.append(f"{i:3d}. [{timestamp}] {level_prefix} {message}")
+                
+                # 如果有额外的统计数据，也显示出来
+                kwargs = log_entry.get('kwargs', {})
+                if kwargs:
+                    for key, value in kwargs.items():
+                        details.append(f"     └─ {key}: {value}")
+        else:
+            details.append("暂无详细日志记录")
+        
+        return "\n".join(details)
     
     def show_task_details(self, task):
         """显示任务详细信息"""
@@ -1082,42 +1734,87 @@ class MainWindow(QMainWindow):
         details.append(f"状态: {task.get('status', '未知')}")
         details.append("")
         
-        # 统计数据
+        # 统计数据 - 适应新的LogManager结构
         statistics = task.get('statistics', {})
         if statistics:
             details.append("=" * 60)
             details.append("📊 统计数据")
             details.append("=" * 60)
             
-            # 基础统计
-            details.append(f"刷新次数: {statistics.get('refresh_count', 0)}")
-            details.append(f"购买次数: {statistics.get('purchase_count', 0)}")
-            details.append(f"发现低价次数: {statistics.get('low_price_found_count', 0)}")
+            # 日志统计
+            message_count = statistics.get('message_count', 0)
+            if message_count > 0:
+                details.append(f"📝 日志统计:")
+                details.append(f"  总日志数: {message_count}")
+                details.append(f"  成功日志: {statistics.get('success_count', 0)}")
+                details.append(f"  警告日志: {statistics.get('warning_count', 0)}")
+                details.append(f"  错误日志: {statistics.get('error_count', 0)}")
+                details.append(f"  信息日志: {statistics.get('info_count', 0)}")
+                details.append(f"  调试日志: {statistics.get('debug_count', 0)}")
+                details.append("")
+            
+            # 业务统计
+            details.append("📈 业务统计:")
+            refresh_count = statistics.get('refresh_count', 0)
+            if refresh_count > 0:
+                details.append(f"  刷新次数: {refresh_count}")
+            
+            purchase_count = statistics.get('purchase_count', 0)
+            if purchase_count > 0:
+                details.append(f"  购买次数: {purchase_count}")
+            
+            low_price_count = statistics.get('low_price_found_count', 0)
+            if low_price_count > 0:
+                details.append(f"  发现低价次数: {low_price_count}")
             
             # 余额信息
             initial_balance = statistics.get('initial_balance')
+            current_balance = statistics.get('current_balance')  # 新LogManager使用current_balance
             if initial_balance is not None and isinstance(initial_balance, (int, float)):
-                details.append(f"初始余额: {initial_balance:,}")
-            final_balance = statistics.get('final_balance')
-            if final_balance is not None and isinstance(final_balance, (int, float)):
-                details.append(f"最终余额: {final_balance:,}")
-            balance_change = statistics.get('balance_change')
-            if balance_change is not None and isinstance(balance_change, (int, float)):
-                details.append(f"余额变化: {balance_change:+,}")
-            balance_change_percentage = statistics.get('balance_change_percentage')
-            if balance_change_percentage is not None and isinstance(balance_change_percentage, (int, float)):
-                details.append(f"变化百分比: {balance_change_percentage:+.2f}%")
+                details.append(f"  初始余额: {initial_balance:,}")
+            if current_balance is not None and isinstance(current_balance, (int, float)):
+                details.append(f"  最终余额: {current_balance:,}")
+                if initial_balance is not None:
+                    balance_change = current_balance - initial_balance
+                    details.append(f"  余额变化: {balance_change:+,}")
+            
+            # 其他业务数据
+            target_price = statistics.get('target_price')
+            if target_price is not None:
+                details.append(f"  目标价格: {target_price}")
+            
+            unit_price = statistics.get('unit_price')
+            if unit_price is not None:
+                details.append(f"  最后单价: {unit_price:.1f}")
+            
+            purchased_quantity = statistics.get('purchased_quantity')
+            if purchased_quantity is not None:
+                details.append(f"  购买数量: {purchased_quantity:.0f}发")
             
             # 花费信息
-            total_cost = statistics.get('total_cost')
-            if total_cost is not None and isinstance(total_cost, (int, float)):
-                details.append(f"总花费: {total_cost:,}")
-            refresh_cost_total = statistics.get('refresh_cost_total')
-            if refresh_cost_total is not None and isinstance(refresh_cost_total, (int, float)):
-                details.append(f"刷新花费: {refresh_cost_total:,}")
-            purchase_cost_total = statistics.get('purchase_cost_total')
-            if purchase_cost_total is not None and isinstance(purchase_cost_total, (int, float)):
-                details.append(f"购买花费: {purchase_cost_total:,}")
+            refresh_cost = statistics.get('refresh_cost')
+            if refresh_cost is not None and isinstance(refresh_cost, (int, float)):
+                details.append(f"  刷新花费: {refresh_cost:,}")
+            
+            purchase_cost = statistics.get('purchase_cost')
+            if purchase_cost is not None and isinstance(purchase_cost, (int, float)):
+                details.append(f"  购买花费: {purchase_cost:,}")
+            
+            # 显示所有其他统计数据
+            details.append("")
+            details.append("🔍 其他统计数据:")
+            for key, value in statistics.items():
+                if key not in ['message_count', 'success_count', 'warning_count', 'error_count', 
+                              'info_count', 'debug_count', 'refresh_count', 'purchase_count', 
+                              'initial_balance', 'current_balance', 'target_price', 'unit_price', 
+                              'purchased_quantity', 'refresh_cost', 'purchase_cost']:
+                    if isinstance(value, (int, float)):
+                        if isinstance(value, float):
+                            details.append(f"  {key}: {value:,.2f}")
+                        else:
+                            details.append(f"  {key}: {value:,}")
+                    else:
+                        details.append(f"  {key}: {value}")
             
             # 效率信息
             refresh_efficiency = statistics.get('refresh_efficiency')
@@ -1273,8 +1970,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         
         # 关于内容
-        about_text = QLabel("""
-        <h3>DeltaForce MarketBot v1.0.0</h3>
+        # 从应用程序属性中读取版本号
+        from PySide6.QtWidgets import QApplication
+        app_version = QApplication.instance().applicationVersion()
+        
+        about_text = QLabel(f"""
+        <h3>DeltaForce MarketBot v{app_version}</h3>
         <p>一个用于DeltaForce游戏的自动化交易工具</p>
         <br>
         <p><b>功能特性：</b></p>
@@ -1294,25 +1995,52 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         self.stacked_widget.addWidget(about_page)
         
-    def create_menu_bar(self):
-        """创建菜单栏"""
-        menubar = self.menuBar()
-        
-        # 文件菜单
-        file_menu = menubar.addMenu("文件(&F)")
-        
-        exit_action = QAction("退出(&X)", self)
-        exit_action.setShortcut("Ctrl+Q")
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-        
-        # 帮助菜单
-        help_menu = menubar.addMenu("帮助(&H)")
-        
-        about_action = QAction("关于(&A)", self)
-        about_action.triggered.connect(self.show_about)
-        help_menu.addAction(about_action)
-        
+    def refresh_all_content(self):
+        """刷新所有内容"""
+        try:
+            self.status_bar.showMessage("正在刷新...")
+            
+            # 1. 重新加载行为管理器
+            if hasattr(self, 'behavior_manager'):
+                self.behavior_manager.load_behaviors()
+                print("✅ 行为管理器已刷新")
+            
+            # 2. 重新创建行为选择页面
+            if hasattr(self, 'action_stacked'):
+                # 清除现有的行为页面
+                while self.action_stacked.count() > 0:
+                    widget = self.action_stacked.widget(0)
+                    self.action_stacked.removeWidget(widget)
+                    if widget:
+                        widget.deleteLater()
+                
+                # 重新创建行为选择页面
+                self.create_action_selection_page()
+                
+                # 重新创建行为详情页面
+                self.create_action_detail_pages()
+                
+                print("✅ 行为页面已刷新")
+            
+            # 3. 重新加载配置
+            self.saved_configs = self.load_configs()
+            print("✅ 配置文件已重新加载")
+            
+            # 4. 清空配置控件缓存
+            self.config_widgets.clear()
+            print("✅ 配置控件缓存已清空")
+            
+            # 5. 如果当前在行为页面，刷新显示
+            if self.current_page == "action":
+                self.switch_page("action")
+            
+            self.status_bar.showMessage("刷新完成")
+            print("🔄 所有内容已刷新完成")
+            
+        except Exception as e:
+            self.status_bar.showMessage(f"刷新失败: {e}")
+            print(f"❌ 刷新失败: {e}")
+    
     def create_status_bar(self):
         """创建状态栏"""
         self.status_bar = QStatusBar()
@@ -1337,8 +2065,9 @@ class MainWindow(QMainWindow):
             self.current_page = page_name
             self.status_bar.showMessage(f"当前页面: {page_name}")
             
-            # 如果切换到执行记录页面，自动刷新数据
+            # 如果切换到执行记录页面，自动刷新数据并显示列表页面
             if page_name == "history":
+                self.history_stacked.setCurrentIndex(0)  # 显示列表页面
                 self.refresh_task_history()
             
             # 如果切换到行为页面，重置到选择界面
@@ -1388,8 +2117,7 @@ class MainWindow(QMainWindow):
         """启动指定的行为"""
         try:
             # 检查是否有行为正在运行
-            if (self.current_behavior and self.current_behavior.isRunning()) or \
-               (self.input_monitor and self.input_monitor.isRunning()):
+            if self.current_behavior and self.current_behavior.isRunning():
                 self.log_text.append("⚠️ 已有行为正在运行中")
                 return
             
@@ -1408,22 +2136,49 @@ class MainWindow(QMainWindow):
             config = self.get_behavior_config(behavior_id)
             self.log_text.append(f"🎛️ 使用自定义配置: {config}")
             
-            # 使用BehaviorManager的统一接口创建行为实例
-            self.current_behavior = self.behavior_manager.create_behavior_instance(
-                behavior_id, window_handles, config
-            )
-            
-            if not self.current_behavior:
-                self.log_text.append(f"❌ 创建行为实例失败: {behavior_id}")
+            # 每次执行都从磁盘重新加载behavior模块，支持热更新
+            try:
+                # 动态导入behavior模块
+                import importlib.util
+                import os
+                
+                behavior_file = f"gui/behavior/{behavior_id}.py"
+                if not os.path.exists(behavior_file):
+                    self.log_text.append(f"❌ 行为文件不存在: {behavior_file}")
+                    return
+                
+                self.log_text.append(f"🔄 从磁盘重新加载行为模块: {behavior_file}")
+                
+                # 重新加载模块
+                spec = importlib.util.spec_from_file_location(behavior_id, behavior_file)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                
+                # 获取behavior类
+                if hasattr(module, 'get_behavior_class'):
+                    behavior_class = module.get_behavior_class()
+                else:
+                    # 查找继承自Behavior的类
+                    behavior_class = None
+                    for name in dir(module):
+                        obj = getattr(module, name)
+                        if (isinstance(obj, type) and 
+                            hasattr(obj, '__bases__') and
+                            any('Behavior' in str(base) for base in obj.__bases__)):
+                            behavior_class = obj
+                            break
+                
+                if not behavior_class:
+                    self.log_text.append(f"❌ 未找到有效的Behavior类: {behavior_id}")
+                    return
+                
+                # 创建behavior实例
+                self.current_behavior = behavior_class(window_handles, config)
+                self.log_text.append(f"✅ 成功创建行为实例: {behavior_class.__name__} (热加载)")
+                
+            except Exception as e:
+                self.log_text.append(f"❌ 创建行为实例失败: {behavior_id}, 错误: {e}")
                 return
-            
-            # 创建用户输入监控
-            from gui.user_input_monitor import UserInputMonitor
-            self.input_monitor = UserInputMonitor(startup_delay=3.0)
-            
-            # 连接监控信号
-            self.input_monitor.user_input_detected.connect(self.on_user_input_detected)
-            self.input_monitor.monitor_status.connect(self.log_text.append)
             
             # 连接行为信号
             if hasattr(self.current_behavior, 'log_message'):
@@ -1433,14 +2188,18 @@ class MainWindow(QMainWindow):
             if hasattr(self.current_behavior, 'finished_signal'):
                 self.current_behavior.finished_signal.connect(self.on_behavior_finished)
             
-            # 同时启动监控和行为线程
-            self.input_monitor.start()
+            # LogManager会自动处理任务记录
+            
+            # 启动行为（新的Behavior基类内置Q键监听和分层线程管理）
             self.current_behavior.start()
             
-            # 获取行为信息用于显示
-            behavior_info = self.behavior_manager.get_behavior_info(behavior_id)
-            self.log_text.append(f"🚀 {behavior_info.get('title', behavior_id)} 已启动")
-            self.log_text.append("👁️ 用户输入监控已启动")
+            # 获取行为标题
+            behavior_title = behavior_id
+            if hasattr(module, 'BEHAVIOR_INFO'):
+                behavior_title = module.BEHAVIOR_INFO.get('title', behavior_id)
+            
+            self.log_text.append(f"🚀 {behavior_title} 已启动")
+            self.log_text.append("🎯 分层线程架构已激活 (Q键监听 + 日志线程 + 主逻辑线程)")
             
         except Exception as e:
             self.log_text.append(f"❌ 启动行为失败: {e}")
@@ -1461,6 +2220,13 @@ class MainWindow(QMainWindow):
             self.log_text.append("✅ 行为正常完成")
         else:
             self.log_text.append("⚠️ 行为被中断")
+        
+        # LogManager会自动处理任务记录和统计数据
+        # 刷新任务历史显示
+        try:
+            self.refresh_task_history()
+        except Exception as e:
+            self.log_text.append(f"⚠️ 刷新任务历史失败: {e}")
         
         # 停止监控线程
         if self.input_monitor and self.input_monitor.isRunning():
@@ -1667,11 +2433,40 @@ class MainWindow(QMainWindow):
         
     def show_about(self):
         """显示关于对话框"""
-        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox, QApplication
+        app_version = QApplication.instance().applicationVersion()
         QMessageBox.about(
             self, 
             "关于 DeltaForce MarketBot",
-            "DeltaForce MarketBot v1.0.0\n\n"
+            f"DeltaForce MarketBot v{app_version}\n\n"
             "一个用于DeltaForce游戏的自动化交易工具\n\n"
-            "© 2025 WintryWind"
+            "© WintryWind"
         )
+    
+    def create_smooth_scroll_area(self):
+        """创建支持平滑滚动的滚动区域"""
+        class SmoothScrollArea(QScrollArea):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setFocusPolicy(Qt.WheelFocus)
+            
+            def wheelEvent(self, event: QWheelEvent):
+                """处理滚轮事件，实现平滑滚动"""
+                # 获取滚动条
+                scrollbar = self.verticalScrollBar()
+                
+                # 计算滚动步长（每次滚动2个行为卡片的高度）
+                scroll_step = 2 * 128  # 120px卡片高度 + 8px间距
+                
+                # 根据滚轮方向滚动
+                if event.angleDelta().y() > 0:
+                    # 向上滚动
+                    new_value = max(0, scrollbar.value() - scroll_step)
+                else:
+                    # 向下滚动
+                    new_value = min(scrollbar.maximum(), scrollbar.value() + scroll_step)
+                
+                scrollbar.setValue(new_value)
+                event.accept()
+        
+        return SmoothScrollArea()

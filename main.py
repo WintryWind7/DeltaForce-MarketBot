@@ -21,7 +21,7 @@ def main():
     
     # 设置应用程序属性
     app.setApplicationName("DeltaForce MarketBot")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationVersion("0.5.1")
     app.setOrganizationName("DeltaForce")
     
     # 设置高DPI支持

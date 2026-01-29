@@ -13,9 +13,10 @@ from typing import Dict, List, Any, Optional
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'DeltaForce'))
 
 try:
-    from DeltaForce import DeltaForceManager, DeltaForceClass
+    from DeltaForce.DeltaManager import get_delta_manager
+    from DeltaForce.DeltaForceClass import DeltaForceClass
 except ImportError:
-    from DeltaForceManager import DeltaForceManager
+    from DeltaManager import get_delta_manager
     from DeltaForceClass import DeltaForceClass
 
 class BehaviorManager:
@@ -24,63 +25,50 @@ class BehaviorManager:
     def __init__(self):
         self.behavior_dir = os.path.join(os.path.dirname(__file__), 'behavior')
         self.behaviors = {}
-        self.delta_manager = None
-        self.single_delta = None
+        self.delta_manager = get_delta_manager()  # 获取全局DeltaManager实例
         self.load_behaviors()
     
     def initialize_delta_management(self, window_handles):
         """
-        初始化Delta管理
-        根据窗口数量决定使用单端还是双端管理
+        初始化Delta管理 - 绑定窗口句柄到全局DeltaManager
         """
         if not window_handles:
+            print("❌ 未提供窗口句柄")
             return False
         
         try:
-            if len(window_handles) >= 2:
-                # 双端模式：使用DeltaForceManager
-                self.delta_manager = DeltaForceManager(window_handles)
-                if self.delta_manager.is_initialized:
-                    return True
-                else:
-                    return False
+            # 绑定窗口句柄到全局DeltaManager
+            success = self.delta_manager.bind_handles(window_handles)
+            if success:
+                print(f"✅ BehaviorManager成功绑定{len(window_handles)}个窗口到DeltaManager")
+                return True
             else:
-                # 单端模式：使用单个DeltaForceClass
-                self.single_delta = DeltaForceClass()
-                if self.single_delta.bind_to_window(window_handles[0]):
-                    return True
-                else:
-                    return False
+                print("❌ BehaviorManager窗口绑定失败")
+                return False
+                    
         except Exception as e:
-            print(f"Delta管理初始化失败: {e}")
+            print(f"❌ BehaviorManager Delta管理初始化失败: {e}")
             return False
     
     def get_delta_for_behavior(self, behavior_type="single"):
         """
-        为行为获取适当的Delta实例
+        为行为获取适当的Delta实例（已弃用 - 现在Behavior直接使用DeltaManager）
         Args:
             behavior_type: "single" 单端, "dual" 双端, "main" 主端, "aux" 辅端
         Returns:
             Delta实例或Manager
         """
+        # 注意：此方法已弃用，现在Behavior直接从DeltaManager获取实例
+        # 保留此方法仅为向后兼容
         if behavior_type == "single" or behavior_type == "main":
-            if self.delta_manager:
-                return self.delta_manager.get_main()
-            else:
-                return self.single_delta
+            return self.delta_manager.get_main()
         elif behavior_type == "aux":
-            if self.delta_manager:
-                return self.delta_manager.get_auxiliary()
-            else:
-                return None
+            return self.delta_manager.get_aux()
         elif behavior_type == "dual":
             return self.delta_manager
         else:
-            # 默认返回主端或单端
-            if self.delta_manager:
-                return self.delta_manager.get_main()
-            else:
-                return self.single_delta
+            # 默认返回主端
+            return self.delta_manager.get_main()
     
     def create_behavior_instance(self, behavior_id: str, window_handles: List[int], config: Dict = None):
         """
@@ -102,14 +90,8 @@ class BehaviorManager:
         
         try:
             # 创建行为实例
+            # 注意：Behavior会自动从全局DeltaManager获取Delta实例，无需手动注入
             behavior_instance = behavior_class(window_handles, config)
-            
-            # 如果行为实例有set_delta_manager方法，注入Delta管理器
-            if hasattr(behavior_instance, 'set_delta_manager'):
-                if self.delta_manager:
-                    behavior_instance.set_delta_manager(self.delta_manager)
-                elif self.single_delta:
-                    behavior_instance.set_delta_manager(self.single_delta)
             
             # 添加窗口预切换功能
             self._add_window_pre_switch(behavior_instance, window_handles)
@@ -225,9 +207,9 @@ class BehaviorManager:
         
         # 遍历behavior目录中的所有.py文件
         for filename in os.listdir(self.behavior_dir):
-            # 匹配 _behavior.py 结尾的文件或者 SMB000X.py、DMR000X.py、SSS000X.py 等代码ID文件
+            # 匹配 _behavior.py 结尾的文件或者 S、D、T 开头的代码ID文件（如SMB000X.py、DMR000X.py、SSS000X.py、SPR000X.py、TEST919G.py等）
             if ((filename.endswith('_behavior.py') or 
-                 filename.startswith(('SMB', 'DMR', 'SSS')) and filename.endswith('.py')) and 
+                 (filename.startswith(('S', 'D', 'T')) and filename.endswith('.py'))) and 
                 filename != '__init__.py'):
                 behavior_id = filename[:-3]  # 移除.py扩展名
                 
@@ -273,6 +255,13 @@ class BehaviorManager:
             return None
         
         module = self.behaviors[behavior_id]['module']
+        
+        # 优先检查模块是否有get_behavior_class函数
+        if hasattr(module, 'get_behavior_class'):
+            try:
+                return module.get_behavior_class()
+            except Exception as e:
+                print(f"调用 {behavior_id} 的 get_behavior_class 函数失败: {e}")
         
         # 查找行为类（通常以Behavior结尾）
         for attr_name in dir(module):

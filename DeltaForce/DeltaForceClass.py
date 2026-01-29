@@ -3,10 +3,23 @@ try:
     from .DeltaForceRecognize import DeltaForceRecognize
 except ImportError:
     from DeltaForceRecognize import DeltaForceRecognize
+
+# 导入协议装饰器
+try:
+    from base.decorators import protocol_handler
+except ImportError:
+    import sys
+    import os
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.join(current_dir, '..', 'base')
+    sys.path.insert(0, base_dir)
+    from decorators import protocol_handler
+
 import pyautogui
 import time
 import numpy as np
 from PIL import Image
+import pyautogui
 
 class DeltaForceClass(DeltaForceRecognize):
     """
@@ -77,6 +90,9 @@ class DeltaForceClass(DeltaForceRecognize):
         # 日志回调函数，用于将验证失败信息传递给GUI
         self.log_callback = None
         
+        # Protocol 栈，用于追踪嵌套调用的 sleep 时间
+        self._protocol_stack = []
+        
         # 导入pyautogui并借用其DPI感知功能，确保在高DPI显示器上正确工作
         import pyautogui
         
@@ -90,7 +106,93 @@ class DeltaForceClass(DeltaForceRecognize):
         self.window_x = 0  # 默认X位置
         self.window_y = 0  # 默认Y位置
     
-    def get_balance(self, where="default", loop=False):
+    @protocol_handler()
+    def sleep(self, protocol, delay):
+        """
+        封装的 sleep 方法，自动作为独立函数记录时间并合并到父 protocol
+        
+        这个方法会被 @protocol_handler 装饰，因此会自动：
+        1. 创建独立的 protocol 实例
+        2. 记录执行时间（包括 sleep 本身）
+        3. 自动合并到父 protocol（如果存在）
+        4. 在日志中显示为子函数（缩进显示）
+        
+        Args:
+            protocol: DeltaProtocol 实例（装饰器自动注入）
+            delay: 睡眠时间（秒）
+        
+        Example:
+            self.sleep(0.5)  # 一行搞定，自动合并
+            # 日志会显示: "  - sleep: 500.123ms"（作为父函数的子项）
+        """
+        import time
+        
+        # 记录 sleep 时间到自己的 protocol
+        protocol.sleep_time = delay
+        
+        # 标记为底层函数
+        protocol.is_base_function = True
+        
+        # 真正的睡眠
+        time.sleep(delay)
+        
+        return True
+    
+    def _push_protocol(self, protocol):
+        """
+        将 protocol 推入栈中（装饰器调用）
+        
+        Args:
+            protocol: DeltaProtocol 实例
+        """
+        self._protocol_stack.append(protocol)
+    
+    def _pop_protocol(self):
+        """
+        从栈中弹出 protocol（装饰器调用）
+        """
+        if self._protocol_stack:
+            self._protocol_stack.pop()
+    
+    @protocol_handler()
+    def _calculate_screenshot_region(self, protocol, m4_ratio: tuple, m5_ratio: tuple) -> bool:
+        """
+        计算截图区域坐标（底层函数，用于性能追踪 - 坐标转换耗时）
+        
+        Args:
+            m4_ratio: 区域左上角比例坐标 (x_ratio, y_ratio)
+            m5_ratio: 区域右下角比例坐标 (x_ratio, y_ratio)
+        
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
+        # 步骤1: 将比例坐标转换为屏幕绝对坐标
+        m4_screen = self.ratio_to_screen_coords(m4_ratio[0], m4_ratio[1])  # 截图区域左上角
+        m5_screen = self.ratio_to_screen_coords(m5_ratio[0], m5_ratio[1])  # 截图区域右下角
+        if not m4_screen or not m5_screen:
+            protocol.error_message = "坐标转换失败"
+            return False
+        
+        # 步骤2: 计算截图区域的边界坐标
+        # 确保left < right 和 top < bottom，处理可能的坐标顺序问题
+        left = min(m4_screen[0], m5_screen[0])
+        top = min(m4_screen[1], m5_screen[1])
+        right = max(m4_screen[0], m5_screen[0])
+        bottom = max(m4_screen[1], m5_screen[1])
+        
+        # 存储到protocol
+        protocol.left = left
+        protocol.top = top
+        protocol.right = right
+        protocol.bottom = bottom
+        protocol.width = right - left
+        protocol.height = bottom - top
+        protocol.is_base_function = True  # 标记为底层函数
+        
+        return True
+    
+    @protocol_handler()
+    def get_balance(self, protocol, where="default", retry=10, change=None) -> bool:
         """
         自动识别游戏内账户余额
         
@@ -100,118 +202,126 @@ class DeltaForceClass(DeltaForceRecognize):
         3. 使用OCR技术识别数字内容
         4. 解析并返回余额数值
         
-        所有坐标使用相对于游戏窗口的比例坐标，确保在不同分辨率下的兼容性。
+        支持两种模式：
+        - 普通模式（change=None）：最多重试retry次，识别到数字就立即返回
+        - 变化检测模式（change有值）：最多重试retry次，只有当识别结果与change不同时才返回
         
         Args:
-            where (str): 余额位置类型，支持以下选项：
-                        "default" - 默认位置（原有位置）
-                        "market" - 交易行位置
-            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
+            where (str): 余额位置类型，"default"为默认位置，"market"为交易行位置
+            retry (int): 最大重试次数，默认10次
+            change (int): 用于检测余额变化的参考值，默认None（不检测变化）
             
         Returns:
-            int: 成功识别时返回账户余额数值
-            None: 识别失败时返回None，可能的失败原因包括：
-                 - 游戏界面未正确显示
-                 - OCR识别失败
-                 - 截图区域无有效数字内容
-                 
-        Raises:
-            Exception: 当操作过程中发生错误时，会捕获异常并打印错误信息
+            bool: 识别成功返回True，失败返回False
+            protocol.balance: 识别出的余额数值（int或None）
             
         Example:
-            >>> delta = DeltaForceClass()
-            >>> balance = delta.get_balance("default")  # 默认位置
-            >>> balance = delta.get_balance("market")   # 交易行位置
+            >>> # 普通模式：识别到数字就返回
+            >>> delta.get_balance(where="market", retry=5)
+            
+            >>> # 变化检测模式：检测余额是否从1000000变化
+            >>> delta.get_balance(where="market", retry=5, change=1000000)
         """
-        # 根据where参数选择对应的位置配置
+        # 统一的点击位置
+        m3_ratio = (0.8566, 0.0834)
+        
+        # 根据where参数选择识别区域
         if where == "market":
-            # 交易行位置配置
-            m3_ratio = (0.8665, 0.0845)  # 交易行余额点击位置
-            # 交易行的识别区域需要相应偏移，保持y轴不变，x轴偏移，手动偏移
-            m4_ratio = (0.7855, 0.2777)  # 余额显示区域左上角（加上偏移）
-            m5_ratio = (0.8866, 0.2914)  # 余额显示区域右下角（加上偏移）
-            print(f"🎯 交易行位置配置: 点击({m3_ratio[0]:.4f}, {m3_ratio[1]:.4f}), 识别区域({m4_ratio[0]:.4f}, {m4_ratio[1]:.4f}) 到 ({m5_ratio[0]:.4f}, {m5_ratio[1]:.4f})")
-        else:  # where == "default" 或其他值
-            # 默认位置配置
-            m3_ratio = (0.8066, 0.0866)  # 默认余额点击位置
-            m4_ratio = (0.7555, 0.2777)  # 余额显示区域左上角
-            m5_ratio = (0.8566, 0.2914)  # 余额显示区域右下角
-            print(f"🎯 默认位置配置: 点击({m3_ratio[0]:.4f}, {m3_ratio[1]:.4f}), 识别区域({m4_ratio[0]:.4f}, {m4_ratio[1]:.4f}) 到 ({m5_ratio[0]:.4f}, {m5_ratio[1]:.4f})")
+            m4_ratio = (0.7855, 0.2750)
+            m5_ratio = (0.9066, 0.2914)
+        else:
+            m4_ratio = (0.7555, 0.2777)
+            m5_ratio = (0.8566, 0.2914)
         
-        # 验证窗口聚焦状态
-        if not self.verify_window_focus(loop=loop):
-            error_msg = f"❌ [get_balance] 窗口验证失败，拒绝执行余额识别 (位置: {where})"
-            print(error_msg)
-            if self.log_callback:
-                self.log_callback(error_msg)
-            return None
+        # 点击余额按钮
+        click_result = self.click_ratio(m3_ratio[0], m3_ratio[1])
+        self.sleep(0.01)    # 防止点不到购买按钮
+        # 重试逻辑
+        last_balance = None
         
-        try:
-            # 步骤1: 点击余额按钮位置，触发余额显示界面
-            time.sleep(0.1)  # 预等待，确保界面稳定
-            self.click_ratio(m3_ratio[0], m3_ratio[1])
-            time.sleep(0.1)  # 等待游戏界面响应，确保余额信息完全加载
+        for attempt in range(retry):
+            # OCR识别 - 返回截图用于调试
+            ocr_result = self.OCR_digits_recognize(m4_ratio, m5_ratio, return_image=True)
             
-            # 步骤2: 将比例坐标转换为屏幕绝对坐标
-            m4_screen = self.ratio_to_screen_coords(m4_ratio[0], m4_ratio[1])  # 截图区域左上角
-            m5_screen = self.ratio_to_screen_coords(m5_ratio[0], m5_ratio[1])  # 截图区域右下角
+            # 提取识别结果
+            recognized_text = ocr_result.recognized_text if ocr_result.success else None
+            balance = int(recognized_text) if (recognized_text and recognized_text.isdigit()) else None
             
-            # 步骤3: 计算截图区域的边界坐标
-            # 确保left < right 和 top < bottom，处理可能的坐标顺序问题
-            left = min(m4_screen[0], m5_screen[0])
-            top = min(m4_screen[1], m5_screen[1])
-            right = max(m4_screen[0], m5_screen[0])
-            bottom = max(m4_screen[1], m5_screen[1])
+            # 保存最后一次结果
+            last_balance = balance
             
-            # 步骤4: 截取包含余额信息的屏幕区域
-            screenshot = pyautogui.screenshot(region=(left, top, right-left, bottom-top))
-            screenshot_array = np.array(screenshot)  # 转换为numpy数组供OCR使用
-            
-            # 步骤5: 使用OCR技术识别截图中的数字内容
-            # 配置OCR参数以优化数字识别准确性
-            results = self.ocr.reader.readtext(
-                screenshot_array,
-                allowlist='1234567890',  # 限制只识别数字字符，提高准确性
-                width_ths=0.7,          # 文本框宽度阈值
-                height_ths=0.7,         # 文本框高度阈值
-                text_threshold=0.5,     # 文本置信度阈值
-                decoder='beamsearch'    # 使用束搜索解码器提高识别准确性
-            )
-            
-            # 步骤6: 处理OCR识别结果并提取余额数值
-            if results:
-                # 记录详细的OCR调试信息
-                print(f"🔍 OCR识别结果 ({where}位置):")
-                for i, (bbox, text, confidence) in enumerate(results):
-                    print(f"  结果{i+1}: 文本='{text}', 置信度={confidence:.3f}, 位置={bbox}")
-                
-                # 合并所有识别到的数字文本片段
-                combined_text = ""
-                for (bbox, text, confidence) in results:
-                    # 过滤非数字字符，只保留数字
-                    filtered_text = ''.join(char for char in text if char.isdigit())
-                    combined_text += filtered_text
-                
-                print(f"📊 合并后的数字文本: '{combined_text}'")
-                
-                # 将合并后的数字字符串转换为整数
-                if combined_text:
-                    balance = int(combined_text)
-                    print(f"✅ 成功识别账户余额: {balance}")
-                    return balance
-                else:
-                    print("❌ 余额识别失败：OCR结果中未找到有效数字")
-                    return None
+            # 模式1: default模式 - 识别到数字就返回
+            if change is None:
+                if balance is not None:
+                    protocol.balance = balance
+                    protocol.get_balance_where = where
+                    protocol.get_balance_retry_attempt = attempt + 1
+                    protocol.get_balance_mode = "default"
+                    protocol.get_balance_success = True
+                    return True
+            # 模式2: change_detection模式
             else:
-                print("❌ 余额识别失败：OCR未返回任何识别结果")
-                return None
-                
-        except Exception as e:
-            # 捕获并处理所有可能的异常情况
-            print(f"余额识别过程中发生错误: {e}")
-            return None
+                # 如果识别到有效数字且与change不同，立即返回
+                if balance is not None and balance != change:
+                    protocol.balance = balance
+                    protocol.get_balance_where = where
+                    protocol.get_balance_retry_attempt = attempt + 1
+                    protocol.get_balance_mode = "change_detection"
+                    protocol.get_balance_change_from = change
+                    protocol.get_balance_success = True
+                    return True
+        
+        # 达到最大重试次数，返回最后一次结果
+        protocol.balance = last_balance
+        protocol.get_balance_where = where
+        protocol.get_balance_retry_attempt = retry
+        protocol.get_balance_mode = "change_detection" if change is not None else "default"
+        
+        # get_balance_success的判断逻辑（业务逻辑状态）
+        if change is None:
+            # default模式：识别到数字就算成功
+            protocol.get_balance_success = (last_balance is not None)
+        else:
+            # change_detection模式：识别到且与change不同才算成功
+            protocol.get_balance_success = (last_balance is not None and last_balance != change)
+            protocol.get_balance_change_from = change
+        
+        # 函数返回值：只要执行完成就返回True（代表函数执行成功）
+        # get_balance_success 记录的是业务逻辑是否成功
+        return True
 
-    def get_bar_price(self):
+    @protocol_handler()
+    def check_purchase_error(self, protocol, top_left_ratio: tuple, bottom_right_ratio: tuple) -> bool:
+        """
+        检查购买是否失败（识别指定区域是否有数字）
+        
+        用于DPB000X购买阶段，检测购买失败提示（通常是余额不足的数字提示）
+        
+        Args:
+            top_left_ratio: 识别区域左上角比例坐标
+            bottom_right_ratio: 识别区域右下角比例坐标
+            
+        Returns:
+            bool: 函数执行成功返回True
+            protocol.has_purchase_error: True表示检测到错误数字（购买失败），False表示没有数字（购买成功）
+            protocol.error_text: 检测到的错误数字文本
+        """
+        # 使用OCR识别区域
+        ocr_result = self.OCR_digits_recognize(top_left_ratio, bottom_right_ratio)
+        
+        # 提取识别结果
+        recognized_text = ocr_result.recognized_text if ocr_result.success else None
+        
+        # 判断是否有错误数字
+        has_error = recognized_text is not None and recognized_text != ""
+        
+        protocol.has_purchase_error = has_error
+        protocol.error_text = recognized_text if has_error else None
+        
+        return True
+
+    @protocol_handler()
+    def get_bar_price(self, protocol) -> bool:
         """
         识别价格条区域的数字
         
@@ -233,53 +343,50 @@ class DeltaForceClass(DeltaForceRecognize):
             ... else:
             ...     print("价格识别失败")
         """
-        try:
-            # 定义识别区域的比例坐标
-            top_left_ratio = (0.2305, 0.6938)      # 左上角坐标
-            bottom_right_ratio = (0.2862, 0.7101)  # 右下角坐标
+        # 定义识别区域的比例坐标
+        top_left_ratio = (0.2305, 0.6938)      # 左上角坐标
+        bottom_right_ratio = (0.2862, 0.7101)  # 右下角坐标
+        
+        # 将比例坐标转换为屏幕坐标
+        screen_left, screen_top = self.ratio_to_screen_coords(top_left_ratio[0], top_left_ratio[1])
+        screen_right, screen_bottom = self.ratio_to_screen_coords(bottom_right_ratio[0], bottom_right_ratio[1])
+        
+        # 截图指定区域
+        screenshot = pyautogui.screenshot(region=(screen_left, screen_top, screen_right-screen_left, screen_bottom-screen_top))
+        screenshot_array = np.array(screenshot)
+        
+        # 使用OCR识别，只识别数字
+        results = self.ocr.reader.readtext(
+            screenshot_array,
+            allowlist='1234567890',  # 限制只识别数字字符
+            width_ths=0.7,
+            height_ths=0.7,
+            text_threshold=0.5,
+            decoder='beamsearch'
+        )
+        
+        # 处理识别结果
+        if results:
+            # 合并所有识别到的数字
+            combined_text = ""
+            for (bbox, text, confidence) in results:
+                # 只保留数字字符
+                filtered_text = ''.join(char for char in text if char.isdigit())
+                combined_text += filtered_text
             
-            # 将比例坐标转换为屏幕坐标
-            screen_left, screen_top = self.ratio_to_screen_coords(top_left_ratio[0], top_left_ratio[1])
-            screen_right, screen_bottom = self.ratio_to_screen_coords(bottom_right_ratio[0], bottom_right_ratio[1])
-            
-            # 截图指定区域
-            screenshot = pyautogui.screenshot(region=(screen_left, screen_top, screen_right-screen_left, screen_bottom-screen_top))
-            screenshot_array = np.array(screenshot)
-            
-            # 使用OCR识别，只识别数字
-            results = self.ocr.reader.readtext(
-                screenshot_array,
-                allowlist='1234567890',  # 限制只识别数字字符
-                width_ths=0.7,
-                height_ths=0.7,
-                text_threshold=0.5,
-                decoder='beamsearch'
-            )
-            
-            # 处理识别结果
-            if results:
-                # 合并所有识别到的数字
-                combined_text = ""
-                for (bbox, text, confidence) in results:
-                    # 只保留数字字符
-                    filtered_text = ''.join(char for char in text if char.isdigit())
-                    combined_text += filtered_text
-                
-                if combined_text:
-                    print(f"成功识别价格条数字: {combined_text}")
-                    return combined_text
-                else:
-                    # print("价格条识别失败：未识别到有效数字")
-                    return None
+            if combined_text:
+                print(f"成功识别价格条数字: {combined_text}")
+                protocol.price = combined_text
+                return True
             else:
-                # print("价格条识别失败：OCR无结果")
-                return None
-                
-        except Exception as e:
-            print(f"价格条识别过程中发生错误: {e}")
-            return None
+                protocol.error_message = "未识别到有效数字"
+                return False
+        else:
+            protocol.error_message = "OCR无结果"
+            return False
 
-    def get_sell_price(self):
+    @protocol_handler()
+    def get_sell_price(self, protocol) -> bool:
         """
         识别出售价格区域的数字
         
@@ -301,53 +408,50 @@ class DeltaForceClass(DeltaForceRecognize):
             ... else:
             ...     print("出售价格识别失败")
         """
-        try:
-            # 定义识别区域的比例坐标
-            top_left_ratio = (0.6366, 0.5935)      # 左上角坐标
-            bottom_right_ratio = (0.7237, 0.6156)  # 右下角坐标
+        # 定义识别区域的比例坐标
+        top_left_ratio = (0.6366, 0.5935)      # 左上角坐标
+        bottom_right_ratio = (0.7237, 0.6156)  # 右下角坐标
+        
+        # 将比例坐标转换为屏幕坐标
+        screen_left, screen_top = self.ratio_to_screen_coords(top_left_ratio[0], top_left_ratio[1])
+        screen_right, screen_bottom = self.ratio_to_screen_coords(bottom_right_ratio[0], bottom_right_ratio[1])
+        
+        # 截图指定区域
+        screenshot = pyautogui.screenshot(region=(screen_left, screen_top, screen_right-screen_left, screen_bottom-screen_top))
+        screenshot_array = np.array(screenshot)
+        
+        # 使用OCR识别，只识别数字
+        results = self.ocr.reader.readtext(
+            screenshot_array,
+            allowlist='1234567890',  # 限制只识别数字字符
+            width_ths=0.7,
+            height_ths=0.7,
+            text_threshold=0.5,
+            decoder='beamsearch'
+        )
+        
+        # 处理识别结果
+        if results:
+            # 合并所有识别到的数字
+            combined_text = ""
+            for (bbox, text, confidence) in results:
+                # 只保留数字字符
+                filtered_text = ''.join(char for char in text if char.isdigit())
+                combined_text += filtered_text
             
-            # 将比例坐标转换为屏幕坐标
-            screen_left, screen_top = self.ratio_to_screen_coords(top_left_ratio[0], top_left_ratio[1])
-            screen_right, screen_bottom = self.ratio_to_screen_coords(bottom_right_ratio[0], bottom_right_ratio[1])
-            
-            # 截图指定区域
-            screenshot = pyautogui.screenshot(region=(screen_left, screen_top, screen_right-screen_left, screen_bottom-screen_top))
-            screenshot_array = np.array(screenshot)
-            
-            # 使用OCR识别，只识别数字
-            results = self.ocr.reader.readtext(
-                screenshot_array,
-                allowlist='1234567890',  # 限制只识别数字字符
-                width_ths=0.7,
-                height_ths=0.7,
-                text_threshold=0.5,
-                decoder='beamsearch'
-            )
-            
-            # 处理识别结果
-            if results:
-                # 合并所有识别到的数字
-                combined_text = ""
-                for (bbox, text, confidence) in results:
-                    # 只保留数字字符
-                    filtered_text = ''.join(char for char in text if char.isdigit())
-                    combined_text += filtered_text
-                
-                if combined_text:
-                    print(f"成功识别出售价格: {combined_text}")
-                    return combined_text
-                else:
-                    # print("出售价格识别失败：未识别到有效数字")
-                    return None
+            if combined_text:
+                print(f"成功识别出售价格: {combined_text}")
+                protocol.sell_price = combined_text
+                return True
             else:
-                # print("出售价格识别失败：OCR无结果")
-                return None
-                
-        except Exception as e:
-            print(f"出售价格识别过程中发生错误: {e}")
-            return None
+                protocol.error_message = "未识别到有效数字"
+                return False
+        else:
+            protocol.error_message = "OCR无结果"
+            return False
 
-    def get_ammo_price(self, ammo_position, loop=False):
+    @protocol_handler()
+    def get_ammo_price(self, protocol, ammo_position, loop=False) -> bool:
         """
         获取配装界面子弹价格
         
@@ -390,24 +494,13 @@ class DeltaForceClass(DeltaForceRecognize):
             >>> if price6 is not None:
             ...     print(f"第6个位置子弹价格: {price6}")
         """
-        # 验证窗口聚焦状态
-        if not self.verify_window_focus(loop=loop):
-            error_msg = f"❌ [get_ammo_price] 窗口验证失败，拒绝执行价格识别"
-            print(error_msg)
-            if self.log_callback:
-                self.log_callback(error_msg)
-            return None
+        # 移除窗口验证逻辑
         
-        return self._get_ammo_price_internal(ammo_position)
-    
-    def _get_ammo_price_internal(self, ammo_position):
-        """
-        获取配装界面子弹价格的内部实现（跳过窗口验证）
-        """
         try:
             # 检查是否传入了必需的参数
             if ammo_position is None:
-                raise ValueError("必须传入ammo_position参数，无默认值")
+                protocol.error_message = "必须传入ammo_position参数，无默认值"
+                return False
             
             # 根据子弹位置确定识别区域的比例坐标
             # 区域大小：宽度0.0377，高度0.0191 (基于1号位置计算)
@@ -415,32 +508,26 @@ class DeltaForceClass(DeltaForceRecognize):
             height = 0.0191
             
             if ammo_position == 1:
-                # 第1个位置的子弹价格区域坐标
                 bottom_right_ratio = (0.7577, 0.3464)
                 top_left_ratio = (bottom_right_ratio[0] - width, bottom_right_ratio[1] - height)
             elif ammo_position == 2:
-                # 第2个位置的子弹价格区域坐标
                 bottom_right_ratio = (0.9333, 0.3464)
                 top_left_ratio = (bottom_right_ratio[0] - width, bottom_right_ratio[1] - height)
             elif ammo_position == 3:
-                # 第3个位置的子弹价格区域坐标
                 bottom_right_ratio = (0.7577, 0.4435)
                 top_left_ratio = (bottom_right_ratio[0] - width, bottom_right_ratio[1] - height)
             elif ammo_position == 4:
-                # 第4个位置的子弹价格区域坐标
                 bottom_right_ratio = (0.9333, 0.4435)
                 top_left_ratio = (bottom_right_ratio[0] - width, bottom_right_ratio[1] - height)
             elif ammo_position == 5:
-                # 第5个位置的子弹价格区域坐标
                 bottom_right_ratio = (0.7577, 0.5428)
                 top_left_ratio = (bottom_right_ratio[0] - width, bottom_right_ratio[1] - height)
             elif ammo_position == 6:
-                # 第6个位置的子弹价格区域坐标
                 bottom_right_ratio = (0.9333, 0.5428)
                 top_left_ratio = (bottom_right_ratio[0] - width, bottom_right_ratio[1] - height)
             else:
-                # 不支持的位置参数
-                raise ValueError(f"不支持的子弹位置: {ammo_position}，当前支持位置: 1, 2, 3, 4, 5, 6")
+                protocol.error_message = f"不支持的子弹位置: {ammo_position}，当前支持位置: 1, 2, 3, 4, 5, 6"
+                return False
             
             # 将比例坐标转换为屏幕坐标
             screen_left, screen_top = self.ratio_to_screen_coords(top_left_ratio[0], top_left_ratio[1])
@@ -453,7 +540,7 @@ class DeltaForceClass(DeltaForceRecognize):
             # 使用OCR识别，只识别数字
             results = self.ocr.reader.readtext(
                 screenshot_array,
-                allowlist='1234567890',  # 限制只识别数字字符
+                allowlist='1234567890',
                 width_ths=0.7,
                 height_ths=0.7,
                 text_threshold=0.5,
@@ -462,32 +549,28 @@ class DeltaForceClass(DeltaForceRecognize):
             
             # 处理识别结果
             if results:
-                # 合并所有识别到的数字
                 combined_text = ""
                 for (bbox, text, confidence) in results:
-                    # 只保留数字字符
                     filtered_text = ''.join(char for char in text if char.isdigit())
                     combined_text += filtered_text
                 
                 if combined_text:
-                    print(f"成功识别第{ammo_position}个位置子弹价格: {combined_text}")
-                    return combined_text
+                    protocol.ammo_price = combined_text
+                    return True
                 else:
-                    # print(f"第{ammo_position}个位置子弹价格识别失败：未识别到有效数字")
-                    return None
+                    protocol.error_message = f"第{ammo_position}个位置子弹价格识别失败：未识别到有效数字"
+                    return False
             else:
-                # print(f"第{ammo_position}个位置子弹价格识别失败：OCR无结果")
-                return None
+                protocol.error_message = f"第{ammo_position}个位置子弹价格识别失败：OCR无结果"
+                return False
                 
-        except ValueError as ve:
-            # 参数错误
-            print(f"参数错误: {ve}")
-            return None
         except Exception as e:
-            print(f"第{ammo_position}个位置子弹价格识别过程中发生错误: {e}")
-            return None
+            protocol.error_message = f"第{ammo_position}个位置子弹价格识别过程中发生错误: {e}"
+            return False
+    
 
-    def click_ammo(self, loop=False):
+    @protocol_handler()
+    def click_ammo(self, protocol, loop=False) -> bool:
         """
         在战备界面点击子弹
         
@@ -507,85 +590,75 @@ class DeltaForceClass(DeltaForceRecognize):
             ... else:
             ...     print("点击子弹按钮失败")
         """
-        # 验证窗口聚焦状态
-        if not self.verify_window_focus(loop=loop):
-            error_msg = f"❌ [click_ammo] 窗口验证失败，拒绝执行子弹点击"
-            print(error_msg)
-            if self.log_callback:
-                self.log_callback(error_msg)
-            return False
-        
-        # 直接使用click_ratio方法点击子弹按钮
-        return self.click_ratio(0.8400, 0.7000)
+        # 移除窗口验证逻辑
+        self.click_ratio(0.8400, 0.7000)
+        return False
 
-    def click_ratio(self, x_ratio, y_ratio, do_after=0.0, do_wait=0.0, loop=False):
+
+    @protocol_handler()
+    def click_ratio(self, protocol, x_ratio, y_ratio, do_wait=0.009) -> bool:
         """
-        根据比例坐标进行点击的封装方法
-        
-        该方法提供了一个统一的接口来处理基于比例坐标的点击操作。
-        自动将比例坐标转换为屏幕坐标，然后执行点击操作。
+        根据比例坐标进行点击的方法
         
         Args:
             x_ratio (float): X轴比例坐标，范围0.0-1.0
             y_ratio (float): Y轴比例坐标，范围0.0-1.0
-            do_after (float): 点击前等待时间，默认0.0秒（立即点击）
-            do_wait (float): 点击后等待时间，默认0.3秒
-            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
+            do_wait (float): 移动后到点击前的延迟时间，默认0.009秒
         
         Returns:
             bool: 点击成功返回True，失败返回False
-            
-        Example:
-            >>> delta = DeltaForceClass()
-            >>> # 立即点击屏幕中心位置
-            >>> delta.click_ratio(0.5, 0.5)
-            >>> # 等待1秒后点击右上角，点击后等待2秒
-            >>> delta.click_ratio(0.9, 0.1, do_after=1.0, do_wait=2.0)
         """
-        # 验证窗口聚焦状态
-        if not self.verify_window_focus(loop=loop):
-            error_msg = f"❌ [click_ratio] 窗口验证失败，拒绝执行点击操作 ({x_ratio}, {y_ratio})"
-            print(error_msg)
-            if self.log_callback:
-                self.log_callback(error_msg)
+        # 验证坐标范围
+        if not (0.0 <= x_ratio <= 1.0 and 0.0 <= y_ratio <= 1.0):
+            protocol.error_message = f"坐标超出范围: x_ratio={x_ratio}, y_ratio={y_ratio}"
             return False
         
-        return self._click_ratio_internal(x_ratio, y_ratio, do_after, do_wait)
-    
-    def move_ratio(self, x_ratio, y_ratio, do_after=0.0, loop=False):
-        """
-        根据比例坐标移动鼠标的封装方法
+        # 将比例坐标转换为屏幕坐标
+        screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
         
-        该方法提供了一个统一的接口来处理基于比例坐标的鼠标移动操作。
-        自动将比例坐标转换为屏幕坐标，然后移动鼠标到目标位置。
+        # 移动鼠标到目标位置
+        pyautogui.moveTo(screen_coords[0], screen_coords[1])
+        
+        # 移动后延迟
+        self.sleep(do_wait)
+        
+        # 执行点击
+        pyautogui.click()
+        
+        protocol.click_success = True
+        return True
+    
+    @protocol_handler()
+    def move_ratio(self, protocol, x_ratio, y_ratio) -> bool:
+        """
+        根据比例坐标移动鼠标的方法
         
         Args:
             x_ratio (float): X轴比例坐标，范围0.0-1.0
             y_ratio (float): Y轴比例坐标，范围0.0-1.0
-            do_after (float): 移动前等待时间，默认0.0秒（立即移动）
-            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
         
         Returns:
             bool: 移动成功返回True，失败返回False
-            
-        Example:
-            >>> delta = DeltaForceClass()
-            >>> # 立即移动到屏幕中心位置
-            >>> delta.move_ratio(0.5, 0.5)
-            >>> # 等待1秒后移动到右上角
-            >>> delta.move_ratio(0.9, 0.1, do_after=1.0)
         """
-        # 验证窗口聚焦状态
-        if not self.verify_window_focus(loop=loop):
-            error_msg = f"❌ [move_ratio] 窗口验证失败，拒绝执行移动操作 ({x_ratio}, {y_ratio})"
-            print(error_msg)
-            if self.log_callback:
-                self.log_callback(error_msg)
+        # 验证坐标范围
+        if not (0.0 <= x_ratio <= 1.0 and 0.0 <= y_ratio <= 1.0):
+            protocol.error_message = f"坐标超出范围: x_ratio={x_ratio}, y_ratio={y_ratio}"
             return False
         
-        return self._move_ratio_internal(x_ratio, y_ratio, do_after)
+        # 将比例坐标转换为屏幕坐标
+        screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
+        if not screen_coords:
+            protocol.error_message = "坐标转换失败"
+            return False
+        
+        # 执行移动操作
+        pyautogui.moveTo(screen_coords[0], screen_coords[1])
+        
+        protocol.move_success = True
+        return True
     
-    def click(self):
+    @protocol_handler()
+    def click(self, protocol) -> bool:
         """
         简单的左键点击方法
         在当前鼠标位置执行左键点击，不进行任何坐标转换或窗口验证
@@ -597,83 +670,32 @@ class DeltaForceClass(DeltaForceRecognize):
             print(f"点击操作失败: {e}")
             return False
     
-    def _move_ratio_internal(self, x_ratio, y_ratio, do_after=0.0):
-        """
-        根据比例坐标移动鼠标的内部实现（跳过窗口验证）
-        """
-        try:
-            # 验证坐标范围
-            if not (0.0 <= x_ratio <= 1.0 and 0.0 <= y_ratio <= 1.0):
-                print(f"坐标超出范围: x_ratio={x_ratio}, y_ratio={y_ratio}")
-                return False
-            
-            # 移动前等待
-            if do_after > 0:
-                time.sleep(do_after)
-            
-            # 将比例坐标转换为屏幕坐标
-            screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
-            
-            # 执行移动操作
-            pyautogui.moveTo(screen_coords[0], screen_coords[1])
-            
-            return True
-            
-        except Exception as e:
-            print(f"移动操作失败: {e}")
-            return False
     
-    def _click_ratio_internal(self, x_ratio, y_ratio, do_after=0.0, do_wait=0.0):
-        """
-        根据比例坐标进行点击的内部实现（跳过窗口验证）
-        """
-        try:
-            # 先移动鼠标到目标位置
-            if not self._move_ratio_internal(x_ratio, y_ratio, do_after):
-                return False
-            
-            # 将比例坐标转换为屏幕坐标（用于点击）
-            screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
-            
-            # 执行点击操作（鼠标已经在正确位置了）
-            pyautogui.click(screen_coords[0], screen_coords[1])
-            
-            # 点击后等待
-            if do_wait > 0:
-                time.sleep(do_wait)
-            
-            return True
-            
-        except Exception as e:
-            print(f"点击操作失败: {e}")
-            return False
 
-    def press_key(self, key, loop=False):
+    @protocol_handler()
+    @protocol_handler()
+    def press_key(self, protocol, key) -> bool:
         """
-        按键操作方法，包含窗口聚焦验证
+        按键操作方法
         
         Args:
             key (str): 要按的键名（如 'esc', 'enter', 'space' 等）
-            loop (bool): 是否循环验证窗口聚焦直到成功，默认False
         
         Returns:
             bool: 操作成功返回True，失败返回False
         """
-        # 验证窗口聚焦状态
-        if not self.verify_window_focus(loop=loop):
-            return False
-        
         try:
             import pyautogui
             pyautogui.press(key)
-            print(f"成功按键: {key}")
+            protocol.key_pressed = key
             return True
             
         except Exception as e:
-            print(f"按键操作失败: {e}")
+            protocol.error_message = f"按键操作失败: {e}"
             return False
 
-    def buy_in_market(self, buyin, maxin, times=1, delay=0.1, buy=True, loop=False):
+    @protocol_handler()
+    def buy_in_market(self, protocol, buyin, maxin, times=1, delay=0.1, buy=True, loop=False, bullet_redeemable=True) -> bool:
         """
         交易行购买操作
         
@@ -686,6 +708,7 @@ class DeltaForceClass(DeltaForceRecognize):
             delay (float): 每次点击之间的延迟时间（秒），默认0.1秒
             buy (bool): 是否执行实际购买操作，默认True。False时仅选择数量，用于测试
             loop (bool): 是否循环验证窗口聚焦直到成功，默认False
+            bullet_redeemable (bool): 子弹是否可兑换，默认True
         
         Returns:
             bool: 操作成功返回True，失败返回False
@@ -699,36 +722,40 @@ class DeltaForceClass(DeltaForceRecognize):
             print(f"❌ [buy_in_market] 购买数量({buyin})不能超过最大数量({maxin})")
             return False
         
-        # 验证窗口聚焦状态
-        if not self.verify_window_focus(loop=loop):
-            print("❌ [buy_in_market] 窗口验证失败，拒绝执行购买操作")
-            return False
+        # 移除窗口验证逻辑
         
         try:
             # 计算数量选择条的点击位置
-            left_ratio = 0.7890   # 最左侧位置
-            right_ratio = 0.9036  # 最右侧位置
-            y_ratio = 0.7233      # 纵坐标位置
+            left_ratio = 0.7892   # 最左侧位置
+            right_ratio = 0.9040  # 最右侧位置
+            quantity_y_ratio_redeemable = 0.7233
+            quantity_y_ratio_exchange = 0.7746
+            y_ratio = quantity_y_ratio_redeemable if bullet_redeemable else quantity_y_ratio_exchange
+            buy_button_y_ratio = 0.7994
+            if not bullet_redeemable:
+                buy_button_y_ratio += quantity_y_ratio_exchange - quantity_y_ratio_redeemable
             
-            # 计算购买比例 - 修正为离散位置计算
-            # 最左侧(数量1) = 0%, 最右侧(数量maxin) = 100%
-            # 中间有 (maxin - 1) 个间隔需要计算
+            # 计算购买比例 - 直接映射逻辑
+            # 31/200 -> 除去两端后映射到 30/199 的位置
+            
             if maxin == 1:
-                # 特殊情况：只有一个数量选项
                 quantity_ratio = 0.0
             else:
-                # 正常情况：将数量1-maxin映射到0%-100%
+                # 直接比例映射：buyin在1-maxin范围内映射到0%-100%
                 quantity_ratio = (buyin - 1) / (maxin - 1)
             
             # 计算实际点击的X坐标比例
             click_x_ratio = left_ratio + (right_ratio - left_ratio) * quantity_ratio
             
-            print(f"📊 [buy_in_market] 数量选择: {buyin}/{maxin} ({quantity_ratio:.2%})")
+            print(f"📊 [buy_in_market] 数量选择: {buyin}/{maxin}")
+            print(f"🔍 [buy_in_market] 计算过程: ({buyin}-1)/({maxin}-1) = {buyin-1}/{maxin-1} = {quantity_ratio:.4f} ({quantity_ratio:.2%})")
             print(f"🎯 [buy_in_market] 点击位置: ({click_x_ratio:.4f}, {y_ratio})")
             
             # 点击数量选择条
-            if not self._click_ratio_internal(click_x_ratio, y_ratio):
-                print("❌ [buy_in_market] 数量选择点击失败")
+            click_result = self.click_ratio(click_x_ratio, y_ratio)
+            # 自动合并，无需手动 protocol <<= click_result
+            if not click_result.success:
+                protocol.error_message = "数量选择点击失败"
                 return False
             
             print(f"✅ [buy_in_market] 数量选择完成: {buyin}/{maxin}")
@@ -739,8 +766,7 @@ class DeltaForceClass(DeltaForceRecognize):
                 return True
             
             # 短暂延迟后执行购买操作
-            import time
-            time.sleep(0.1)
+            self.sleep(0.005)
             
             # 先点击预备位置 (0.0711, 0.1985) - 已被用户注释掉
             # if not self._click_ratio_internal(0.0711, 0.1985):
@@ -753,15 +779,17 @@ class DeltaForceClass(DeltaForceRecognize):
             
             # 循环点击购买按钮 (0.8511, 0.7994)
             for i in range(times):
-                if not self._click_ratio_internal(0.8511, 0.7994):
-                    print(f"❌ [buy_in_market] 第 {i+1} 次购买点击失败")
+                buy_click_result = self.click_ratio(0.8511, buy_button_y_ratio)
+                # 自动合并，无需手动 protocol <<= buy_click_result
+                if not buy_click_result.success:
+                    protocol.error_message = f"第 {i+1} 次购买点击失败"
                     return False
                 
                 print(f"✅ [buy_in_market] 完成第 {i+1}/{times} 次购买点击")
                 
                 # 除了最后一次，都需要延迟
                 if i < times - 1:
-                    time.sleep(delay)
+                    self.sleep(delay)
             
             print(f"✅ [buy_in_market] 购买操作完成，数量: {buyin}/{maxin}，点击 {times} 次")
             return True
@@ -770,7 +798,8 @@ class DeltaForceClass(DeltaForceRecognize):
             print(f"❌ [buy_in_market] 购买操作失败: {e}")
             return False
 
-    def goto(self, action):
+    @protocol_handler()
+    def goto(self, protocol, action) -> bool:
         """
         通用位置点击方法，根据action参数执行相应的点击操作
         
@@ -781,36 +810,64 @@ class DeltaForceClass(DeltaForceRecognize):
             bool: 操作成功返回True，失败返回False
         """
         # 根据action参数执行相应操作
+        # 所有 self.click_ratio() 调用都会自动合并，无需手动 protocol <<=
         if action == "555":
             # 点击余额按钮
-            return self.click_ratio(0.8066, 0.0866)
+            click_result = self.click_ratio(0.8066, 0.0866)
+            if click_result and click_result.success:
+                return True
+            else:
+                protocol.error_message = "点击555按钮失败"
+                return False
              
         elif action == "开始游戏":
             # 点击开始游戏按钮
-            return self.click_ratio(0.1057, 0.0866)
+            click_result = self.click_ratio(0.1057, 0.0866)
+            if click_result and click_result.success:
+                return True
+            else:
+                protocol.error_message = "点击开始游戏按钮失败"
+                return False
             
         elif action == "交易行":
             # 点击交易行按钮
-            return self.click_ratio(0.3727, 0.0866)
+            click_result = self.click_ratio(0.3727, 0.0866)
+            if click_result and click_result.success:
+                return True
+            else:
+                protocol.error_message = "点击交易行按钮失败"
+                return False
             
         elif action == "仓库":
             # 点击仓库按钮
-            return self.click_ratio(0.1718, 0.0866)
+            click_result = self.click_ratio(0.1718, 0.0866)
+            if click_result and click_result.success:
+                return True
+            else:
+                protocol.error_message = "点击仓库按钮失败"
+                return False
             
         elif action == "出售":
             # 出售操作：先点击交易行，延迟1秒后点击出售位置
             # 第一步：点击交易行
-            if not self.click_ratio(0.3727, 0.0866):
+            click_result1 = self.click_ratio(0.3727, 0.0866)
+            if not click_result1 or not click_result1.success:
                 return False
             # 第二步：延迟1秒后点击出售位置
-            return self.click_ratio(0.1760, 0.1362, do_after=1.0)
+            click_result = self.click_ratio(0.1760, 0.1362, do_after=1.0)
+            if click_result and click_result.success:
+                return True
+            else:
+                protocol.error_message = "点击出售位置失败"
+                return False
             
         else:
             # 不支持的操作类型
             print(f"不支持的操作类型: {action}")
             return False
     
-    def get_buy_price(self):
+    @protocol_handler()
+    def get_buy_price(self, protocol) -> bool:
         """
         获取购买价格
         识别指定区域的数字
@@ -834,15 +891,19 @@ class DeltaForceClass(DeltaForceRecognize):
             if result and result.strip():
                 # 尝试转换为整数
                 price = int(result.strip())
-                return price
+                protocol.buy_price = price
+                return True
             else:
-                return None
+                protocol.error_message = "无法获取购买价格"
+                return False
                 
         except Exception as e:
             print(f"获取购买价格失败: {e}")
-            return None
+            protocol.error_message = str(e)
+            return False
     
-    def bind_to_window(self, hwnd):
+    @protocol_handler()
+    def bind_to_window(self, protocol, hwnd) -> bool:
         """
         绑定到指定的窗口句柄（不切换焦点，只获取窗口信息）
         
@@ -867,13 +928,17 @@ class DeltaForceClass(DeltaForceRecognize):
                 return False
             
             print(f"✅ 成功绑定到窗口 {hwnd} (尺寸: {self.window_width}x{self.window_height})")
+            protocol.window_handle = hwnd
+            protocol.window_size = (self.window_width, self.window_height)
             return True
             
         except Exception as e:
             print(f"❌ 绑定窗口 {hwnd} 失败: {e}")
+            protocol.error_message = str(e)
             return False
     
-    def set_log_callback(self, callback):
+    @protocol_handler()
+    def set_log_callback(self, protocol, callback) -> bool:
         """
         设置日志回调函数，用于将验证失败信息传递给GUI
         
@@ -881,14 +946,62 @@ class DeltaForceClass(DeltaForceRecognize):
             callback: 回调函数，接受一个字符串参数（日志消息）
         """
         self.log_callback = callback
+        protocol.callback_set = True
+        return True
     
-    def focus_window(self):
+    @protocol_handler()
+    def hotkey(self, protocol, *keys) -> bool:
         """
-        聚焦当前绑定的窗口
+        执行组合键操作（底层函数）
+        
+        Args:
+            *keys: 按键名称，例如 ('alt', 'tab') 或 ('ctrl', 'c')
+        
+        Returns:
+            bool: 执行是否成功
+        
+        Example:
+            delta.hotkey('alt', 'tab')  # Alt+Tab
+            delta.hotkey('ctrl', 'c')   # Ctrl+C
+            delta.hotkey('ctrl', 'shift', 's')  # Ctrl+Shift+S
+        """
+        # 标记为底层函数
+        protocol.is_base_function = True
+        
+        if not keys:
+            print("❌ hotkey: 未提供按键")
+            protocol.error_message = "未提供按键"
+            return False
+        
+        try:
+            import pyautogui
+            
+            # 记录按键组合
+            keys_str = '+'.join(keys)
+            protocol.keys = keys_str
+            
+            # 执行组合键
+            pyautogui.hotkey(*keys)
+            
+            protocol.hotkey_success = True
+            return True
+            
+        except Exception as e:
+            print(f"❌ 执行组合键 {'+'.join(keys)} 失败: {e}")
+            protocol.error_message = str(e)
+            return False
+    
+    @protocol_handler()
+    def focus_window(self, protocol) -> bool:
+        """
+        聚焦当前绑定的窗口（底层函数）
         
         Returns:
             bool: 聚焦是否成功
         """
+        # 标记为底层函数
+        protocol.is_base_function = True
+        
         if self.target_window_handle is None:
             print("❌ 未绑定任何窗口")
             return False
@@ -898,27 +1011,38 @@ class DeltaForceClass(DeltaForceRecognize):
             ctypes.windll.user32.SetForegroundWindow(self.target_window_handle)
             ctypes.windll.user32.ShowWindow(self.target_window_handle, 9)  # SW_RESTORE
             
+            protocol.focus_success = True
+            protocol.window_handle = self.target_window_handle
             return True
             
         except Exception as e:
             print(f"❌ 聚焦窗口失败: {e}")
+            protocol.error_message = str(e)
             return False
     
-    def get_foreground_window_handle(self):
+    @protocol_handler()
+    def get_foreground_window_handle(self, protocol) -> bool:
         """
-        获取当前前台窗口的句柄
+        获取当前前台窗口的句柄（底层函数）
         
         Returns:
             int: 前台窗口句柄，失败返回None
         """
+        # 标记为底层函数
+        protocol.is_base_function = True
+        
         try:
             import ctypes
-            return ctypes.windll.user32.GetForegroundWindow()
+            handle = ctypes.windll.user32.GetForegroundWindow()
+            protocol.foreground_handle = handle
+            return True
         except Exception as e:
             print(f"❌ 获取前台窗口句柄失败: {e}")
-            return None
+            protocol.error_message = str(e)
+            return False
     
-    def verify_window_focus(self, loop=False):
+    @protocol_handler()
+    def verify_window_focus(self, protocol, loop=False) -> bool:
         """
         验证窗口聚焦状态 - 在每个行为执行前调用此函数进行验证
         
@@ -942,49 +1066,45 @@ class DeltaForceClass(DeltaForceRecognize):
         
         # 静默验证，不输出日志
         
-        retry_count = 0
-        max_retries = 1 if not loop else float('inf')  # 非循环模式只尝试1次
-        
-        while retry_count < max_retries:
-            retry_count += 1
+        if not loop:
+            # 非循环模式：只尝试1次
+            retry_count = 0
+            max_retries = 1
             
-            if loop and retry_count > 1:
-                print(f"🔄 [窗口验证] 第 {retry_count} 次重试...")
-            
-            # 1. 尝试聚焦到目标窗口
-            focus_success = self.focus_window()
-            if not focus_success:
-                if loop:
-                    print(f"⚠️ [窗口验证] 第 {retry_count} 次聚焦操作失败，等待后重试...")
-                    time.sleep(0.5)  # 等待0.5秒后重试
-                    continue
-                else:
+            while retry_count < max_retries:
+                retry_count += 1
+                
+                # 1. 尝试聚焦到目标窗口
+                focus_success = self.focus_window()
+                if not focus_success:
                     print(f"❌ [窗口验证] 聚焦操作失败")
                     return False
-            
-            # 2. 短暂等待聚焦生效
-            time.sleep(0.01)
-            
-            # 3. 检测当前前台窗口
-            current_foreground = self.get_foreground_window_handle()
-            if current_foreground is None:
-                if loop:
-                    print(f"⚠️ [窗口验证] 第 {retry_count} 次无法获取前台窗口句柄，等待后重试...")
-                    time.sleep(0.5)
-                    continue
-                else:
+                
+                # 2. 短暂等待聚焦生效
+                self.sleep(0.01)
+                
+                # 3. 检测当前前台窗口
+                current_foreground_result = self.get_foreground_window_handle()
+                # 自动合并，无需手动 protocol <<=
+                if not current_foreground_result or not current_foreground_result.success:
                     print(f"❌ [窗口验证] 无法获取当前前台窗口句柄")
                     return False
-            
-            # 4. 验证是否为目标窗口
-            if current_foreground == self.target_window_handle:
-                return True
-            else:
-                if loop:
-                    print(f"⚠️ [窗口验证] 第 {retry_count} 次验证失败 - 目标: {self.target_window_handle}, 实际: {current_foreground}")
-                    time.sleep(0.5)  # 等待0.5秒后重试
-                    continue
+                current_foreground = current_foreground_result.foreground_handle
+                
+                # 4. 验证是否为目标窗口
+                if current_foreground == self.target_window_handle:
+                    protocol.window_handle = current_foreground
+                    protocol.target_window_handle = self.target_window_handle
+                    protocol.actual_foreground_handle = current_foreground
+                    protocol.verify_result = "匹配"
+                    protocol.verify_success = True
+                    return True
                 else:
+                    protocol.target_window_handle = self.target_window_handle
+                    protocol.actual_foreground_handle = current_foreground
+                    protocol.verify_result = "不匹配"
+                    protocol.verify_success = False
+                    
                     error_msg = f"❌ [窗口验证] 窗口聚焦验证失败! 目标窗口: {self.target_window_handle}, 实际前台: {current_foreground}"
                     print(error_msg)
                     print(f"   建议: 检查窗口是否被其他程序覆盖或最小化")
@@ -994,41 +1114,353 @@ class DeltaForceClass(DeltaForceRecognize):
                         self.log_callback(error_msg)
                     
                     return False
+        else:
+            # 循环模式：先尝试正常验证，失败时进入缓冲循环
+            retry_count = 0
+            max_normal_retries = 50  # 正常重试次数
+            
+            # 第一阶段：正常循环重试
+            while retry_count < max_normal_retries:
+                retry_count += 1
+                
+                if retry_count > 1:
+                    print(f"🔄 [窗口验证] 第 {retry_count} 次重试...")
+                
+                # 1. 尝试聚焦到目标窗口
+                focus_success = self.focus_window()
+                if not focus_success:
+                    print(f"⚠️ [窗口验证] 第 {retry_count} 次聚焦操作失败，等待后重试...")
+                    time.sleep(0.5)
+                    continue
+                
+                # 2. 短暂等待聚焦生效
+                time.sleep(0.01)
+                
+                # 3. 检测当前前台窗口
+                current_foreground_result = self.get_foreground_window_handle()
+                # 自动合并，无需手动 protocol <<=
+                if not current_foreground_result or not current_foreground_result.success:
+                    print(f"⚠️ [窗口验证] 第 {retry_count} 次无法获取前台窗口句柄，等待后重试...")
+                    time.sleep(0.5)
+                    continue
+                current_foreground = current_foreground_result.foreground_handle
+                
+                # 4. 验证是否为目标窗口
+                if current_foreground == self.target_window_handle:
+                    protocol.window_handle = current_foreground
+                    return True  # 验证成功，正常返回True
+                else:
+                    print(f"⚠️ [窗口验证] 第 {retry_count} 次验证失败 - 目标: {self.target_window_handle}, 实际: {current_foreground}")
+                    time.sleep(0.5)
+            
+            # 第二阶段：正常重试失败，进入缓冲循环模式
+            print(f"⚠️ [窗口验证] 正常重试 {max_normal_retries} 次失败，进入缓冲循环模式")
+            
+            buffer_cycles = 5  # 缓冲循环次数
+            verifications_per_cycle = 10  # 每个缓冲循环的验证次数
+            
+            print(f"🔄 [窗口验证] 进入缓冲模式，将执行 {buffer_cycles} 个缓冲循环以防止程序出错")
+            print(f"⚠️ [窗口验证] 注意：由于时效性问题，缓冲模式最终将返回失败")
+            
+            for buffer_cycle in range(buffer_cycles):
+                print(f"🔄 [窗口验证] 开始第 {buffer_cycle + 1}/{buffer_cycles} 个缓冲循环")
+                
+                # 每个缓冲循环内进行10次验证
+                for verification in range(verifications_per_cycle):
+                    # 1. 尝试聚焦到目标窗口
+                    focus_success = self.focus_window()
+                    if not focus_success:
+                        print(f"⚠️ [窗口验证] 缓冲循环 {buffer_cycle + 1} - 第 {verification + 1} 次聚焦操作失败")
+                        time.sleep(0.5)
+                        continue
+                    
+                    # 2. 短暂等待聚焦生效
+                    time.sleep(0.01)
+                    
+                    # 3. 检测当前前台窗口
+                    current_foreground = self.get_foreground_window_handle()
+                    if current_foreground is None:
+                        print(f"⚠️ [窗口验证] 缓冲循环 {buffer_cycle + 1} - 第 {verification + 1} 次无法获取前台窗口句柄")
+                        time.sleep(0.5)
+                        continue
+                    
+                    # 4. 验证是否为目标窗口
+                    if current_foreground == self.target_window_handle:
+                        print(f"✅ [窗口验证] 缓冲循环 {buffer_cycle + 1} - 第 {verification + 1} 次验证成功，但由于时效性问题返回失败")
+                        # 注意：缓冲模式下即使验证成功也返回False（时效性问题）
+                        break  # 跳出内层验证循环
+                    else:
+                        print(f"⚠️ [窗口验证] 缓冲循环 {buffer_cycle + 1} - 第 {verification + 1} 次验证失败 - 目标: {self.target_window_handle}, 实际: {current_foreground}")
+                        time.sleep(0.5)
+                
+                # 如果当前缓冲循环的10次验证都失败了
+                if buffer_cycle < buffer_cycles - 1:  # 不是最后一个缓冲循环
+                    print(f"🔄 [窗口验证] 缓冲循环 {buffer_cycle + 1} 的10次验证完成，执行Alt+Tab窗口切换")
+                    
+                    # 执行3次Alt+Tab操作
+                    try:
+                        import pyautogui
+                        for alt_tab_count in range(3):
+                            print(f"⌨️ [窗口验证] 执行第 {alt_tab_count + 1}/3 次 Alt+Tab 操作")
+                            pyautogui.hotkey('alt', 'tab')
+                            time.sleep(0.5)  # 每次Alt+Tab之间等待0.5秒
+                        
+                        print(f"✅ [窗口验证] Alt+Tab操作完成，准备进入下个缓冲循环")
+                        time.sleep(1.0)  # Alt+Tab操作后等待1秒
+                        
+                    except Exception as e:
+                        print(f"❌ [窗口验证] Alt+Tab操作失败: {e}")
+                else:
+                    # 最后一个缓冲循环完成
+                    print(f"🔄 [窗口验证] 所有 {buffer_cycles} 个缓冲循环已完成")
+            
+            # 缓冲循环完成，返回False
+            error_msg = f"❌ [窗口验证] 缓冲模式完成，窗口验证最终失败 (目标窗口: {self.target_window_handle})"
+            print(error_msg)
+            print(f"   说明: 经过正常重试和缓冲循环，仍无法验证窗口聚焦")
+            
+            # 如果设置了日志回调，将失败信息发送到GUI
+            if self.log_callback:
+                self.log_callback(error_msg)
+            
+            return False
         
         # 这里不应该到达，但为了安全起见
         return False
-
-# 模块测试代码
-if __name__ == "__main__":
-    # 创建DeltaForceClass实例
-    delta = DeltaForceClass()
     
-    # 测试余额识别功能
-    # print("=== 测试余额识别功能 ===")
-    # balance = delta.get_balance()
-    # if balance is not None:
-    #     print(f"测试成功 - 当前账户余额: {balance}")
-    # else:
-    #     print("测试失败 - 无法识别账户余额")
+    def generate_grid_coords(self):
+        """生成9x9网格的中心坐标（不使用装饰器追踪）"""
+        left_x = 0.6600
+        top_y = 0.2302
+        right_x = 0.9234
+        bottom_y = 0.6779
+        
+        grid_width = (right_x - left_x) / 8
+        grid_height = (bottom_y - top_y) / 8
+        
+        grid_coords = []
+        for row in range(9):
+            for col in range(9):
+                x = left_x + col * grid_width
+                y = top_y + row * grid_height
+                grid_coords.append((x, y))
+        
+        return grid_coords
     
-    print("\n=== 测试get_bar_price方法功能 ===")
+    def check_waiting_status(self):
+        """检查指定区域是否显示长度为4的文本（不使用装饰器追踪）"""
+        import pyautogui
+        import numpy as np
+        import easyocr
+        
+        try:
+            # 初始化中文OCR识别器（如果还没有）
+            if not hasattr(self, 'chinese_reader'):
+                self.chinese_reader = easyocr.Reader(['ch_sim'])
+            
+            top_left_ratio = (0.2497, 0.2524)
+            bottom_right_ratio = (0.2917, 0.2724)
+            
+            screen_left, screen_top = self.ratio_to_screen_coords(top_left_ratio[0], top_left_ratio[1])
+            screen_right, screen_bottom = self.ratio_to_screen_coords(bottom_right_ratio[0], bottom_right_ratio[1])
+            
+            screenshot = pyautogui.screenshot(region=(screen_left, screen_top, screen_right-screen_left, screen_bottom-screen_top))
+            screenshot_array = np.array(screenshot)
+            
+            results = self.chinese_reader.readtext(screenshot_array)
+            
+            for (bbox, text, confidence) in results:
+                if len(text) == 4:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"检查等待状态异常: {e}")
+            return False
     
-    print("测试价格条数字识别:")
-    bar_price = delta.get_bar_price()
-    if bar_price is not None:
-        print(f"✓ 价格条识别成功: {bar_price}")
-    else:
-        print("✗ 价格条识别失败")
-    
-    # 测试get_sell_price方法功能
-    print("\n=== 测试get_sell_price方法功能 ===")
-    
-    print("测试出售价格数字识别:")
-    sell_price = delta.get_sell_price()
-    if sell_price is not None:
-        print(f"✓ 出售价格识别成功: {sell_price}")
-    else:
-        print("✗ 出售价格识别失败")
-    
-    print("\n=== 测试完成 ===")
+    def search_and_sell_first_9_items(self, price_difference=10):
+        """搜索9x9格子并出售2次（不使用装饰器追踪）
+        
+        总共只出售2次：
+        第一次：从第1行开始找到第一个能点击的格子，刷新直到价格>520后出售
+        第二次：从第7行开始找到第一个能点击的格子，刷新直到价格>520后出售
+        
+        Args:
+            price_difference: 出售价格差值，默认10
+        """
+        import pyautogui
+        import time
+        
+        # 生成网格坐标
+        grid_coords = self.generate_grid_coords()
+        
+        # ===== 第一次出售：从第1行开始搜索 =====
+        print("===== 开始第一次出售（从第1行搜索） =====")
+        sold_first = False
+        
+        for i in range(min(9, len(grid_coords))):
+            x_ratio, y_ratio = grid_coords[i]
+            print(f"尝试第{i+1}格...")
+            
+            # 循环直到价格>520
+            while True:
+                # 点击网格位置
+                if not self.click_ratio(x_ratio, y_ratio):
+                    print(f"第{i+1}格: 点击失败，尝试下一格")
+                    break
+                
+                time.sleep(0.2)
+                
+                # 获取物品价格
+                bar_price_result = self.get_bar_price()
+                
+                if not (bar_price_result and bar_price_result.success):
+                    print(f"第{i+1}格: 无法获取价格，尝试下一格")
+                    break
+                
+                bar_price = int(bar_price_result.price)
+                print(f"第{i+1}格: 价格 {bar_price}")
+                
+                # 判断价格
+                if bar_price > 520:
+                    # 价格合适，进入出售流程
+                    print(f"第{i+1}格: 价格>520，开始第一次出售")
+                    time.sleep(0.5)
+                    
+                    # 点击数量位置
+                    self.click_ratio(0.6900, 0.5333)
+                    time.sleep(0.5)
+                    
+                    # 点击价格输入框
+                    self.click_ratio(0.6891, 0.6051)
+                    time.sleep(0.2)
+                    
+                    # 全选并输入价格
+                    pyautogui.hotkey('ctrl', 'a')
+                    time.sleep(0.2)
+                    
+                    # 计算出售价格
+                    sell_price = bar_price - price_difference
+                    pyautogui.typewrite(str(sell_price))
+                    time.sleep(0.2)
+                    
+                    # 点击出售确认按钮
+                    self.click_ratio(0.6823, 0.6990)
+                    time.sleep(2)
+                    
+                    # 等待出售状态确认
+                    print(f"第{i+1}格: 等待第一次出售完成...")
+                    while not self.check_waiting_status():
+                        time.sleep(1)
+                    print(f"第{i+1}格: 第一次出售完成")
+                    
+                    sold_first = True
+                    break  # 第一次出售完成，跳出while循环
+                else:
+                    # 价格<=520，按ESC重试
+                    print(f"第{i+1}格: 价格<=520，按ESC刷新")
+                    pyautogui.press('esc')
+                    time.sleep(0.5)
+                    # 继续while循环，重新点击此格
+            
+            # 如果第一次出售完成，跳出for循环
+            if sold_first:
+                break
+            
+            time.sleep(0.1)
+        
+        if not sold_first:
+            print("===== 第一次出售失败：未找到合适的格子 =====")
+            return
+        
+        print("===== 第一次出售完成 =====\n")
+        
+        # ===== 第二次出售：从第7行开始搜索 =====
+        print("===== 开始第二次出售（从第7行搜索） =====")
+        sold_second = False
+        
+        for i in range(9):
+            second_index = 54 + i  # 第7行索引 = 6行*9列 + i
+            
+            if second_index >= len(grid_coords):
+                print(f"索引{second_index}超出范围，跳过")
+                continue
+            
+            x_ratio, y_ratio = grid_coords[second_index]
+            print(f"尝试第7行第{i+1}格（索引{second_index}）...")
+            
+            # 循环直到价格>520
+            while True:
+                # 点击网格位置
+                if not self.click_ratio(x_ratio, y_ratio):
+                    print(f"第7行第{i+1}格: 点击失败，尝试下一格")
+                    break
+                
+                time.sleep(0.2)
+                
+                # 获取物品价格
+                bar_price_result = self.get_bar_price()
+                
+                if not (bar_price_result and bar_price_result.success):
+                    print(f"第7行第{i+1}格: 无法获取价格，尝试下一格")
+                    break
+                
+                bar_price = int(bar_price_result.price)
+                print(f"第7行第{i+1}格: 价格 {bar_price}")
+                
+                # 判断价格
+                if bar_price > 520:
+                    # 价格合适，进入出售流程
+                    print(f"第7行第{i+1}格: 价格>520，开始第二次出售")
+                    time.sleep(0.5)
+                    
+                    # 点击数量位置
+                    self.click_ratio(0.7546, 0.5343)
+                    time.sleep(0.5)
+                    
+                    # 点击价格输入框
+                    self.click_ratio(0.6891, 0.6051)
+                    time.sleep(0.2)
+                    
+                    # 全选并输入价格
+                    pyautogui.hotkey('ctrl', 'a')
+                    time.sleep(0.2)
+                    
+                    # 计算出售价格
+                    sell_price = bar_price - price_difference
+                    pyautogui.typewrite(str(sell_price))
+                    time.sleep(0.2)
+                    
+                    # 点击出售确认按钮
+                    self.click_ratio(0.6823, 0.6990)
+                    time.sleep(2)
+                    
+                    # 等待出售状态确认
+                    print(f"第7行第{i+1}格: 等待第二次出售完成...")
+                    while not self.check_waiting_status():
+                        time.sleep(1)
+                    print(f"第7行第{i+1}格: 第二次出售完成")
+                    
+                    sold_second = True
+                    break  # 第二次出售完成，跳出while循环
+                else:
+                    # 价格<=520，按ESC重试
+                    print(f"第7行第{i+1}格: 价格<=520，按ESC刷新")
+                    pyautogui.press('esc')
+                    time.sleep(0.5)
+                    # 继续while循环，重新点击此格
+            
+            # 如果第二次出售完成，跳出for循环
+            if sold_second:
+                break
+            
+            time.sleep(0.1)
+        
+        if not sold_second:
+            print("===== 第二次出售失败：未找到合适的格子 =====")
+            return
+        
+        print("===== 第二次出售完成 =====")
+        print("===== 全部出售流程完成（总共2次出售） =====")
     

@@ -77,14 +77,15 @@ class TaskLogger:
             try:
                 # 创建任务记录
                 record = {
-                    "task_id": f"{script_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    "task_id": task_data.get('task_id', f"{script_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
                     "script_id": script_id,
                     "start_time": task_data.get('start_time'),
-                    "end_time": datetime.now().isoformat(),
+                    "end_time": task_data.get('end_time', datetime.now().isoformat()),
                     "duration": task_data.get('duration', 0),
                     "status": task_data.get('status', 'completed'),
                     "statistics": task_data.get('statistics', {}),
-                    "summary": task_data.get('summary', '')
+                    "summary": task_data.get('summary', ''),
+                    "detailed_logs": task_data.get('detailed_logs', [])  # 包含详细日志
                 }
                 
                 # 加载现有记录
