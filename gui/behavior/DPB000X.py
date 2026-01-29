@@ -538,19 +538,16 @@ class DualPurchaseBehavior(Behavior):
         # 判断价格状态并生成输出
         if unit_price <= self.target_price and unit_price >= self.min_price_threshold:
             action = "发现低价"
-            price_comparison = f"单价: {unit_price:.1f} <={self.target_price}"
+            price_comparison = f"{unit_price:.1f} <= {self.target_price}"
         elif unit_price < self.min_price_threshold:
             action = "价格过低"
-            price_comparison = f"单价: {unit_price:.1f} <{self.min_price_threshold}"
+            price_comparison = f"{unit_price:.1f} < {self.min_price_threshold}"
         else:
             action = "价格过高"
-            price_comparison = f"单价: {unit_price:.1f} >{self.target_price}"
+            price_comparison = f"{unit_price:.1f} > {self.target_price}"
         
-        # 普通模式：简洁输出
-        self.send_log(LogLevel.INFO, f"[第{self.refresh_count}轮] {price_comparison}，余额变化 {balance_before:,} → {balance_after:,}")
-        
-        # Debug模式：详细输出
-        self.debug_log(LogLevel.INFO, f"🔄 刷新详情: 单价 {unit_price:.1f}, 数量 {self.refresh_quantity}发, 花费 {price_diff:,.0f}, 余额 {balance_after:,}")
+        # 统一输出格式：一行显示所有信息
+        self.send_log(LogLevel.INFO, f"[第{self.refresh_count}轮] 单价: {price_comparison}, 余额变化: {balance_before:,} → {balance_after:,}")
         
         self.record_price_data(balance_before, balance_after, unit_price, action)
         

@@ -235,7 +235,7 @@ class DeltaForceClass(DeltaForceRecognize):
         
         # 点击余额按钮
         click_result = self.click_ratio(m3_ratio[0], m3_ratio[1])
-        
+        self.sleep(0.01)    # 防止点不到购买按钮
         # 重试逻辑
         last_balance = None
         
@@ -591,104 +591,71 @@ class DeltaForceClass(DeltaForceRecognize):
             ...     print("点击子弹按钮失败")
         """
         # 移除窗口验证逻辑
-        
-        # 直接使用click_ratio方法点击子弹按钮
-        click_result = self.click_ratio(0.8400, 0.7000)
-        # 自动合并，无需手动 protocol <<= click_result
-        if click_result and click_result.success:
-            return True
-        else:
-            protocol.error_message = "点击子弹按钮失败"
-            return False
+        self.click_ratio(0.8400, 0.7000)
+        return False
+
 
     @protocol_handler()
-    def click_ratio(self, protocol, x_ratio, y_ratio, do_after=0.0, do_wait=0.0) -> bool:
+    def click_ratio(self, protocol, x_ratio, y_ratio, do_wait=0.009) -> bool:
         """
         根据比例坐标进行点击的方法
         
         Args:
             x_ratio (float): X轴比例坐标，范围0.0-1.0
             y_ratio (float): Y轴比例坐标，范围0.0-1.0
-            do_after (float): 点击前等待时间，默认0.0秒
-            do_wait (float): 点击后等待时间，默认0.0秒
+            do_wait (float): 移动后到点击前的延迟时间，默认0.009秒
         
         Returns:
             bool: 点击成功返回True，失败返回False
         """
-        try:
-            # 验证坐标范围
-            if not (0.0 <= x_ratio <= 1.0 and 0.0 <= y_ratio <= 1.0):
-                protocol.error_message = f"坐标超出范围: x_ratio={x_ratio}, y_ratio={y_ratio}"
-                return False
-            
-            # 移动前等待
-            if do_after > 0:
-                self.sleep(do_after)
-            
-            # 将比例坐标转换为屏幕坐标
-            screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
-            if not screen_coords:
-                protocol.error_message = "坐标转换失败"
-                return False
-            
-            # 移动鼠标到目标位置
-            pyautogui.moveTo(screen_coords[0], screen_coords[1])
-            
-            # 移动和点击之间添加短暂延迟
-            self.sleep(0.009)
-            
-            # 执行点击
-            pyautogui.click()
-            
-            # 点击后等待
-            if do_wait > 0:
-                self.sleep(do_wait)
-            
-            protocol.click_success = True
-            return True
-            
-        except Exception as e:
-            protocol.error_message = f"点击操作失败: {e}"
+        # 验证坐标范围
+        if not (0.0 <= x_ratio <= 1.0 and 0.0 <= y_ratio <= 1.0):
+            protocol.error_message = f"坐标超出范围: x_ratio={x_ratio}, y_ratio={y_ratio}"
             return False
+        
+        # 将比例坐标转换为屏幕坐标
+        screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
+        
+        # 移动鼠标到目标位置
+        pyautogui.moveTo(screen_coords[0], screen_coords[1])
+        
+        # 移动后延迟
+        self.sleep(do_wait)
+        
+        # 执行点击
+        pyautogui.click()
+        
+        protocol.click_success = True
+        return True
     
     @protocol_handler()
-    def move_ratio(self, protocol, x_ratio, y_ratio, do_after=0.0) -> bool:
+    def move_ratio(self, protocol, x_ratio, y_ratio) -> bool:
         """
         根据比例坐标移动鼠标的方法
         
         Args:
             x_ratio (float): X轴比例坐标，范围0.0-1.0
             y_ratio (float): Y轴比例坐标，范围0.0-1.0
-            do_after (float): 移动前等待时间，默认0.0秒
         
         Returns:
             bool: 移动成功返回True，失败返回False
         """
-        try:
-            # 验证坐标范围
-            if not (0.0 <= x_ratio <= 1.0 and 0.0 <= y_ratio <= 1.0):
-                protocol.error_message = f"坐标超出范围: x_ratio={x_ratio}, y_ratio={y_ratio}"
-                return False
-            
-            # 移动前等待
-            if do_after > 0:
-                self.sleep(do_after)
-            
-            # 将比例坐标转换为屏幕坐标
-            screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
-            if not screen_coords:
-                protocol.error_message = "坐标转换失败"
-                return False
-            
-            # 执行移动操作
-            pyautogui.moveTo(screen_coords[0], screen_coords[1])
-            
-            protocol.move_success = True
-            return True
-            
-        except Exception as e:
-            protocol.error_message = f"移动操作失败: {e}"
+        # 验证坐标范围
+        if not (0.0 <= x_ratio <= 1.0 and 0.0 <= y_ratio <= 1.0):
+            protocol.error_message = f"坐标超出范围: x_ratio={x_ratio}, y_ratio={y_ratio}"
             return False
+        
+        # 将比例坐标转换为屏幕坐标
+        screen_coords = self.ratio_to_screen_coords(x_ratio, y_ratio)
+        if not screen_coords:
+            protocol.error_message = "坐标转换失败"
+            return False
+        
+        # 执行移动操作
+        pyautogui.moveTo(screen_coords[0], screen_coords[1])
+        
+        protocol.move_success = True
+        return True
     
     @protocol_handler()
     def click(self, protocol) -> bool:
@@ -728,7 +695,7 @@ class DeltaForceClass(DeltaForceRecognize):
             return False
 
     @protocol_handler()
-    def buy_in_market(self, protocol, buyin, maxin, times=1, delay=0.1, buy=True, loop=False) -> bool:
+    def buy_in_market(self, protocol, buyin, maxin, times=1, delay=0.1, buy=True, loop=False, bullet_redeemable=True) -> bool:
         """
         交易行购买操作
         
@@ -741,6 +708,7 @@ class DeltaForceClass(DeltaForceRecognize):
             delay (float): 每次点击之间的延迟时间（秒），默认0.1秒
             buy (bool): 是否执行实际购买操作，默认True。False时仅选择数量，用于测试
             loop (bool): 是否循环验证窗口聚焦直到成功，默认False
+            bullet_redeemable (bool): 子弹是否可兑换，默认True
         
         Returns:
             bool: 操作成功返回True，失败返回False
@@ -760,7 +728,12 @@ class DeltaForceClass(DeltaForceRecognize):
             # 计算数量选择条的点击位置
             left_ratio = 0.7892   # 最左侧位置
             right_ratio = 0.9040  # 最右侧位置
-            y_ratio = 0.7233      # 纵坐标位置
+            quantity_y_ratio_redeemable = 0.7233
+            quantity_y_ratio_exchange = 0.7746
+            y_ratio = quantity_y_ratio_redeemable if bullet_redeemable else quantity_y_ratio_exchange
+            buy_button_y_ratio = 0.7994
+            if not bullet_redeemable:
+                buy_button_y_ratio += quantity_y_ratio_exchange - quantity_y_ratio_redeemable
             
             # 计算购买比例 - 直接映射逻辑
             # 31/200 -> 除去两端后映射到 30/199 的位置
@@ -806,7 +779,7 @@ class DeltaForceClass(DeltaForceRecognize):
             
             # 循环点击购买按钮 (0.8511, 0.7994)
             for i in range(times):
-                buy_click_result = self.click_ratio(0.8511, 0.7994)
+                buy_click_result = self.click_ratio(0.8511, buy_button_y_ratio)
                 # 自动合并，无需手动 protocol <<= buy_click_result
                 if not buy_click_result.success:
                     protocol.error_message = f"第 {i+1} 次购买点击失败"

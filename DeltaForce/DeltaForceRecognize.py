@@ -320,7 +320,7 @@ class OCR:
                 text_threshold=text_threshold,
                 decoder=decoder
             )
-        
+            
         return results
 
 

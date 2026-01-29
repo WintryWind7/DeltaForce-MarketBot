@@ -6,17 +6,18 @@
     "click_count": 5
   },
   "SMB000X": {
-    "target_price": 1270,
+    "target_price": 440,
     "min_price_threshold": 200,
     "refresh_delay": 1.0,
     "refresh_quantity": 31,
     "purchase_quantity": 200,
-    "click_times": 10,
+    "click_times": 11,
     "max_quantity": 200,
     "work_start_hour": 3,
     "work_start_minute": 15,
     "work_end_hour": 5,
     "work_end_minute": 15,
+    "bullet_redeemable": true,
     "auto_shutdown": true,
     "debug_mode": 0
   },

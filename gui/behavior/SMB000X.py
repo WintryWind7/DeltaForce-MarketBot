@@ -111,6 +111,12 @@ BEHAVIOR_INFO = {
             "max": 59,
             "description": "工作结束时间的分钟部分 (0-59)"
         },
+        "bullet_redeemable": {
+            "type": "bool",
+            "label": "子弹可兑换",
+            "default": True,
+            "description": "启用时按当前兑换布局计算数量条Y轴"
+        },
         "auto_shutdown": {
             "type": "bool",
             "label": "自动关机",
@@ -208,6 +214,12 @@ class PurchaseRefreshBehavior(Behavior):
                 'min': 0,
                 'max': 59,
                 'description': '工作结束时间的分钟部分 (0-59)'
+            },
+            'bullet_redeemable': {
+                'type': 'bool',
+                'label': '子弹可兑换',
+                'default': True,
+                'description': '启用时按当前兑换布局计算数量条Y轴'
             },
             'auto_shutdown': {
                 'type': 'bool',
@@ -322,7 +334,7 @@ class PurchaseRefreshBehavior(Behavior):
                     self.send_log(LogLevel.SUCCESS, "✅ 一轮刷新购买完成")
                 else:
                     self.increment_error()
-                    self.send_log(LogLevel.WARNING, "⚠️ 一轮刷新购买失败")
+                    # 刷新失败（不打印日志）
                 
                 # 检查余额变化 - 连续20次余额不变则退出
                 if not self.monitor_balance_change():
@@ -396,12 +408,9 @@ class PurchaseRefreshBehavior(Behavior):
                     for line in lines:
                         self.debug_log(LogLevel.INFO, line)
                 
-                # 价格不合理，继续刷新
-                if unit_price < self.min_price_threshold:
-                    self.send_log(LogLevel.WARNING, f"⚠️ 价格过低: {unit_price:.1f} < {self.min_price_threshold} (可能识别错误)")
-                else:
-                    self.send_log(LogLevel.DEBUG, f"🔄 价格过高: {unit_price:.1f} > {self.target_price}")
-                    # 只在价格过高时保存余额截图(价格过低可能是识别错误,不保存)
+                # 价格不合理，继续刷新（不打印日志）
+                # 只在价格过高时保存余额截图(价格过低可能是识别错误,不保存)
+                if unit_price >= self.min_price_threshold:
                     self.save_balance_screenshot(refresh_result)
                 
                 return False
@@ -457,41 +466,26 @@ class PurchaseRefreshBehavior(Behavior):
             # 获取刷新前余额
             self.debug_log(LogLevel.INFO, f"🔍 开始第{self.refresh_count}次刷新操作")
             balance_before_result = delta.get_balance(where="market")
-            if not balance_before_result.success:
-                self.send_log(LogLevel.WARNING, "⚠️ 无法获取刷新前余额")
-                self.debug_log(LogLevel.ERROR, "🔍 获取刷新前余额失败")
-                return False
             
             # 自动合并（全局协议栈自动处理）
             balance_before = balance_before_result.balance
             
-            # 执行刷新购买
-            self.log_with_stats(LogLevel.INFO, f"🔄 第{self.refresh_count}次刷新: 购买{self.refresh_quantity}发检测价格 (参数: buyin={self.refresh_quantity}, maxin={self.max_quantity})",
-                              refresh_count=self.refresh_count, refresh_quantity=self.refresh_quantity)
-            
+            # 执行刷新购买（不打印日志）
             buy_result = delta.buy_in_market(
                 buyin=self.refresh_quantity,
                 maxin=self.max_quantity,
                 times=1,
                 buy=True,
-                loop=False
+                loop=False,
+                delay=0.03,
+                bullet_redeemable=self.bullet_redeemable,
             )
             # 自动合并（全局协议栈自动处理）
-            
-            if not buy_result.success:
-                self.send_log(LogLevel.WARNING, f"⚠️ 第{self.refresh_count}次刷新购买失败")
-                self.debug_log(LogLevel.ERROR, f"🔍 刷新购买失败: {self.refresh_quantity}发")
-                return False
-            
+            delta.sleep(0.003)
             # 获取刷新后余额（使用变化检测模式）
             self.debug_log(LogLevel.INFO, f"🔍 获取刷新后余额（变化检测模式，基准: {balance_before}）...")
             balance_after_result = delta.get_balance(where="market", retry=10, change=balance_before)
             # 自动合并（全局协议栈自动处理）
-            
-            # 检查余额是否变化（get_balance_success已包含：识别到数字 且 与change不同）
-            if not balance_after_result.get_balance_success:
-                self.send_log(LogLevel.WARNING, f"⚠️ 余额未变化（重试{balance_after_result.get_balance_retry_attempt}次后仍为 {balance_after_result.balance}）")
-                return False
             
             balance_after = balance_after_result.balance
             self.debug_log(LogLevel.SUCCESS, f"🔍 第{balance_after_result.get_balance_retry_attempt}次检测成功：余额变化 {balance_before} → {balance_after}")
@@ -517,19 +511,19 @@ class PurchaseRefreshBehavior(Behavior):
                 'balance_after': balance_after
             })
             
-            self.log_with_stats(LogLevel.INFO, f"🔄 第{self.refresh_count}次刷新完成: 单价 {unit_price:.1f}, 数量 {self.refresh_quantity}发, 花费 {price_diff:,.0f}, 余额 {balance_after:,}",
-                              refresh_count=self.refresh_count, 
-                              unit_price=unit_price,
-                              refresh_cost=price_diff,
-                              current_balance=balance_after)
-            
-            # 记录价格数据到CSV
+            # 判断价格状态并生成输出
             if unit_price <= self.target_price and unit_price >= self.min_price_threshold:
                 action = "发现低价"
+                price_comparison = f"{unit_price:.1f} <= {self.target_price}"
             elif unit_price < self.min_price_threshold:
                 action = "价格过低"
+                price_comparison = f"{unit_price:.1f} < {self.min_price_threshold}"
             else:
                 action = "价格过高"
+                price_comparison = f"{unit_price:.1f} > {self.target_price}"
+            
+            # 统一输出格式：一行显示所有信息
+            self.send_log(LogLevel.INFO, f"[第{self.refresh_count}轮] 单价: {price_comparison}, 余额变化: {balance_before:,} → {balance_after:,}")
             
             self.record_price_data(balance_before, balance_after, unit_price, action)
             
@@ -567,8 +561,10 @@ class PurchaseRefreshBehavior(Behavior):
                 buyin=self.purchase_quantity,
                 maxin=self.max_quantity,
                 times=self.click_times,
+                delay=0.2,
                 buy=True,
-                loop=False
+                loop=False,
+                bullet_redeemable=self.bullet_redeemable,
             )
             # 自动合并（全局协议栈自动处理）
             
@@ -740,7 +736,7 @@ class PurchaseRefreshBehavior(Behavior):
                     current_time
                 ])
             
-            self.send_log(LogLevel.DEBUG, f"📊 价格记录: 检测{self.detection_count}次, 单价{unit_price:.1f}, 动作{action}")
+            # 价格记录（不打印日志）
             
         except Exception as e:
             self.send_log(LogLevel.WARNING, f"⚠️ 价格记录写入失败: {e}")

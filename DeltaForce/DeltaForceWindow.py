@@ -8,25 +8,15 @@ from typing import Optional, Dict, Any, Tuple
 # 导入协议装饰器
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'base'))
 
-# 添加core目录到Python路径
-core_path = os.path.join(os.path.dirname(__file__), '..', 'core')
-sys.path.insert(0, core_path)
+# 导入编译后的window_func模块
+# 尝试多个可能的导入路径
+window_func_imported = False
 
-# 导入编译后的pyd文件
-try:
-    from dist.window_func import (
-        find_window_by_name, 
-        get_window_info, 
-        get_window_title,
-        get_process_name,
-        enum_windows
-    )
-    print("✓ 成功导入编译后的window_func模块")
-except ImportError as e:
-    print(f"警告: 无法从dist导入window_func模块: {e}")
-    # 如果直接导入失败，尝试从src导入
+# 1. 尝试从 core/dist 目录导入（编译后的.pyd文件）
+core_dist_path = os.path.join(os.path.dirname(__file__), '..', 'core', 'dist')
+if os.path.exists(core_dist_path):
+    sys.path.insert(0, core_dist_path)
     try:
-        sys.path.append(os.path.join(core_path, 'src'))
         from window_func import (
             find_window_by_name, 
             get_window_info, 
@@ -34,16 +24,42 @@ except ImportError as e:
             get_process_name,
             enum_windows
         )
-        print("✓ 成功从src导入window_func模块")
-    except ImportError as e2:
-        print(f"警告: 无法导入window_func模块: {e2}")
-        print("请确保已编译pyd文件或安装Cython依赖")
-        # 提供模拟函数用于测试
-        def find_window_by_name(*args, **kwargs): return None
-        def get_window_info(*args, **kwargs): return {}
-        def get_window_title(*args, **kwargs): return ""
-        def get_process_name(*args, **kwargs): return ""
-        def enum_windows(): return []
+        print("✓ 成功从 core/dist 导入 window_func 模块")
+        window_func_imported = True
+    except ImportError:
+        pass
+
+# 2. 尝试从项目根目录导入（如果.pyd文件在根目录）
+if not window_func_imported:
+    root_path = os.path.join(os.path.dirname(__file__), '..')
+    sys.path.insert(0, root_path)
+    try:
+        from window_func import (
+            find_window_by_name, 
+            get_window_info, 
+            get_window_title,
+            get_process_name,
+            enum_windows
+        )
+        print("✓ 成功从项目根目录导入 window_func 模块")
+        window_func_imported = True
+    except ImportError:
+        pass
+
+# 3. 如果都失败，提供模拟函数
+if not window_func_imported:
+    print("⚠️ 警告: 无法导入 window_func 模块")
+    print("   请确保 window_func.*.pyd 文件在以下位置之一:")
+    print(f"   1. {core_dist_path}")
+    print(f"   2. {root_path}")
+    print("   或重新编译: cd core && python setup.py build_ext")
+    
+    # 提供模拟函数用于测试
+    def find_window_by_name(*args, **kwargs): return None
+    def get_window_info(*args, **kwargs): return {}
+    def get_window_title(*args, **kwargs): return ""
+    def get_process_name(*args, **kwargs): return ""
+    def enum_windows(): return []
 
 
 class DeltaForceWindow(object):

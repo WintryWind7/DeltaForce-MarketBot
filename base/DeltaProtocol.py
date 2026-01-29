@@ -4,6 +4,23 @@ DeltaProtocol - 简单的通信协议类
 用于项目内部组件之间的数据传递，采用混合设计：
 - 核心字段：每个协议实例都有的基本字段
 - 动态字段：根据具体使用场景动态添加的字段
+
+函数追踪模式：
+1. 普通函数（默认）：
+   - 创建 timing_record，显示在调用链中
+   - 净时间 = 总时间 - 子函数时间
+   - 根据 debug 模式决定是否显示
+
+2. 底层函数（is_base_function = True）：
+   - 创建 timing_record，总是显示在调用链中
+   - 净时间 = 总时间 - 子函数时间
+   - 无论何种模式都显示
+
+3. 不可见函数（is_invisible = True）：
+   - 不创建 timing_record，永不显示
+   - 不合并到父协议的 nested_time
+   - 耗时自然融入父函数的净时间
+   - 适用于纯工具类函数（如坐标转换）
 """
 
 import time
@@ -31,6 +48,7 @@ class DeltaProtocol:
         # self.timestamp = time.time()    # 自动生成时间戳 (暂时注释)
         self.timing_records = []        # 执行时间记录：[(函数名, 运行时长, sleep延迟, 是否为底层), ...]
         self.is_base_function = False   # 是否为底层函数，默认False
+        self.is_invisible = False       # 是否为不可见函数（不追踪），默认False
         self.nested_time = 0.0          # 嵌套调用时间累积，用于计算净执行时间
         self.nested_sleep_time = 0.0    # 嵌套调用的sleep延迟累积（仅用于显示）
         
